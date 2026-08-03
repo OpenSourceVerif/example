@@ -46,12 +46,6 @@ impl Index<Expr> for Context {
     }
 }
 
-impl IndexMut<Expr> for Context {
-    fn index_mut(&mut self, index: Expr) -> &mut Self::Output {
-        &mut self.exprs[index]
-    }
-}
-
 impl Index<Stmt> for Context {
     type Output = StmtDef;
 
@@ -60,8 +54,10 @@ impl Index<Stmt> for Context {
     }
 }
 
-impl IndexMut<Stmt> for Context {
-    fn index_mut(&mut self, index: Stmt) -> &mut Self::Output {
-        &mut self.stmts[index]
+impl Index<Var> for Context {
+    type Output = str;
+
+    fn index(&self, index: Var) -> &Self::Output {
+        &self.vars[index]
     }
 }

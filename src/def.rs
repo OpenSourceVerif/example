@@ -12,20 +12,32 @@ index_vec::define_index_type! {
 
 #[derive(Debug, Clone, Copy)]
 pub enum StmtDef {
+    Skip,
     If { cond: Expr, then_branch: Stmt, else_branch: Stmt },
     Assign { var: Var, def: Expr },
-    Seq(Stmt, Stmt),
+    Seq { first: Stmt, second: Stmt },
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Op {
     Add,
+    Sub,
+    Mul,
+    Eq,
+    Ne,
+    Lt,
+    Le,
+    Gt,
+    Ge,
     And,
+    Or,
+    Implies,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Uop {
     Not,
+    Neg,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -34,4 +46,5 @@ pub enum ExprDef {
     Const(i32),
     Binary { lhs: Expr, rhs: Expr, op: Op },
     Unary { op: Uop, expr: Expr },
+    Call { func: Var, arg: Expr },
 }

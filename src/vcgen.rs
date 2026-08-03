@@ -15,6 +15,10 @@ pub fn subst(ctxt: &mut Context, expr: Expr, var: Var, replacement: Expr) -> Exp
             let expr = subst(ctxt, expr, var, replacement);
             ctxt.alloc(ExprDef::Unary { expr, op })
         }
+        ExprDef::Call { func, arg } => {
+            let arg = subst(ctxt, arg, var, replacement);
+            ctxt.alloc(ExprDef::Call { func, arg })
+        }
     }
 }
 
@@ -25,7 +29,8 @@ pub fn wp(ctxt: &mut Context, s: Stmt, k: Expr) -> Expr {
     use Uop::*;
 
     match ctxt[s] {
-        StmtDef::Seq(first, second) => {
+        StmtDef::Skip => k,
+        StmtDef::Seq { first, second } => {
             let intermediate = wp(ctxt, second, k);
             wp(ctxt, first, intermediate)
         }
@@ -33,10 +38,10 @@ pub fn wp(ctxt: &mut Context, s: Stmt, k: Expr) -> Expr {
             let then_requires = wp(ctxt, then_branch, k);
             let else_requires = wp(ctxt, else_branch, k);
 
-            let then = ctxt.alloc(Binary { lhs: cond, rhs: then_requires, op: And });
-            let else_ = ctxt.alloc(Unary { op: Not, expr: cond });
-            let else_ = ctxt.alloc(Binary { lhs: else_, rhs: else_requires, op: And });
-            ctxt.alloc(ExprDef::Binary { lhs: then, rhs: else_, op: And })
+            let then = ctxt.alloc(Binary { lhs: cond, rhs: then_requires, op: Implies });
+            let not_cond = ctxt.alloc(Unary { op: Not, expr: cond });
+            let else_ = ctxt.alloc(Binary { lhs: not_cond, rhs: else_requires, op: Implies });
+            ctxt.alloc(Binary { lhs: then, rhs: else_, op: And })
         }
         StmtDef::Assign { var, def } => subst(ctxt, k, var, def),
     }
