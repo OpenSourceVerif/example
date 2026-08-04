@@ -1,5 +1,7 @@
 use crate::{Expr, ExprDef, Name, Sort, SortDef, Stmt, StmtDef, Sym, SymDef, SymDefInterned};
 
+mod shorthand;
+
 use interner::{ArrayInterner, StringInterner};
 
 pub trait Intern<I, D> {

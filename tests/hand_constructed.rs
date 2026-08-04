@@ -1,7 +1,4 @@
-use example::{
-    Intern, Context, Expr, ExprDef::*, Op::*, Program, Sort, SortDef::*, Stmt, StmtDef::*, Sym,
-    SymDef, smt, vc,
-};
+use example::{Context, Expr, Program, Stmt, Sym, smt, vc};
 
 use std::{
     io::Write,
@@ -9,16 +6,16 @@ use std::{
 };
 
 fn add_assign(ctxt: &mut Context, var: Sym, amount: i32) -> Stmt {
-    let lhs = ctxt.intern(Sym(var));
-    let rhs = ctxt.intern(Const(amount));
-    let value = ctxt.intern(Binary { op: Add, lhs, rhs });
-    ctxt.intern(Assign { var, def: value })
+    let lhs = ctxt.sym(var);
+    let rhs = ctxt.int_lit(amount);
+    let value = ctxt.add(lhs, rhs);
+    ctxt.assign(var, value)
 }
 
-fn positive(ctxt: &mut Context, var: Sym) -> Expr {
-    let lhs = ctxt.intern(Sym(var));
-    let zero = ctxt.intern(Const(0));
-    ctxt.intern(Binary { op: Gt, lhs, rhs: zero })
+fn is_positive(ctxt: &mut Context, var: Sym) -> Expr {
+    let lhs = ctxt.sym(var);
+    let zero = ctxt.int_lit(0);
+    ctxt.gt(lhs, zero)
 }
 
 fn conditional_add(
@@ -28,36 +25,36 @@ fn conditional_add(
     then_amount: i32,
     else_amount: i32,
 ) -> Stmt {
-    let cond = positive(ctxt, condition_var);
+    let cond = is_positive(ctxt, condition_var);
     let then_branch = add_assign(ctxt, target_var, then_amount);
     let else_branch = add_assign(ctxt, target_var, else_amount);
 
-    ctxt.intern(If { cond, then_branch, else_branch })
+    ctxt.if_(cond, then_branch, else_branch)
 }
 
 fn test_program(ctxt: &mut Context) -> Program {
-    let int: Sort = ctxt.intern(Int);
+    let int = ctxt.int_sort();
 
-    let x = ctxt.intern(SymDef { name: "x", sort: int });
-    let y = ctxt.intern(SymDef { name: "y", sort: int });
-    let ret = ctxt.intern(SymDef { name: "ret", sort: int });
-    let result = ctxt.intern(Sym(ret));
+    let x = ctxt.symbol("x", int);
+    let y = ctxt.symbol("y", int);
+    let ret = ctxt.symbol("ret", int);
+    let result = ctxt.sym(ret);
 
-    let zero = ctxt.intern(Const(0));
-    let four = ctxt.intern(Const(4));
-    let six = ctxt.intern(Const(6));
+    let zero = ctxt.int_lit(0);
+    let four = ctxt.int_lit(4);
+    let six = ctxt.int_lit(6);
 
-    let initialize = ctxt.intern(Assign { var: ret, def: zero });
+    let initialize = ctxt.assign(ret, zero);
     let first_if = conditional_add(ctxt, x, ret, 1, 2);
     let second_if = conditional_add(ctxt, y, ret, 3, 4);
-    let remaining = ctxt.intern(Seq { first: first_if, second: second_if });
-    let body = ctxt.intern(Seq { first: initialize, second: remaining });
+    let remaining = ctxt.seq(first_if, second_if);
+    let body = ctxt.seq(initialize, remaining);
 
-    let lower_bound = ctxt.intern(Binary { op: Ge, lhs: result, rhs: four });
-    let upper_bound = ctxt.intern(Binary { op: Le, lhs: result, rhs: six });
+    let lower_bound = ctxt.ge(result, four);
+    let upper_bound = ctxt.le(result, six);
 
     let requires = Box::new([]);
-    let ensures = ctxt.intern(Binary { op: And, lhs: lower_bound, rhs: upper_bound });
+    let ensures = ctxt.and(lower_bound, upper_bound);
 
     Program { body, requires, ensures }
 }
@@ -97,6 +94,8 @@ fn the_result_is_always_between_four_and_six() {
     let program = test_program(&mut ctxt);
     let verification = vc(&mut ctxt, program);
     let script = smt(&ctxt, verification);
+
+    println!("{:}", script);
 
     assert_eq!(z3(&script), "unsat");
 }

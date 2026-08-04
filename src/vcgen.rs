@@ -1,40 +1,39 @@
 use crate::Program;
 
-use super::{Intern, Context, Expr, ExprDef, Op, Stmt, StmtDef, Sym, Uop};
+use super::{Context, Expr, ExprDef, ExprDef::*, Intern, Stmt, StmtDef, Sym};
 
-pub struct VerificationCondition {
+pub struct Obligation {
     pub assume: Box<[Expr]>,
     pub goal: Expr,
 }
 
-pub fn subst(ctxt: &mut Context, expr: Expr, sym: Sym, replacement: Expr) -> Expr {
-    match ctxt.get(expr) {
-        ExprDef::Sym(find) if find == sym => replacement,
-        ExprDef::Sym(_) => expr,
-        ExprDef::Const(_) => expr,
-        ExprDef::Binary { lhs, rhs, op } => {
-            let lhs = subst(ctxt, lhs, sym, replacement);
-            let rhs = subst(ctxt, rhs, sym, replacement);
+impl Context {
+    pub fn subst(&mut self, expr: Expr, sym: Sym, replacement: Expr) -> Expr {
+        match self.get(expr) {
+            ExprDef::Sym(find) if find == sym => replacement,
+            ExprDef::Sym(_) => expr,
+            ExprDef::Const(_) => expr,
+            ExprDef::Bool(_) => expr,
+            ExprDef::Binary { lhs, rhs, op } => {
+                let lhs = self.subst(lhs, sym, replacement);
+                let rhs = self.subst(rhs, sym, replacement);
 
-            ctxt.intern(ExprDef::Binary { lhs, rhs, op })
-        }
-        ExprDef::Unary { op, expr } => {
-            let expr = subst(ctxt, expr, sym, replacement);
-            ctxt.intern(ExprDef::Unary { expr, op })
-        }
-        ExprDef::Call { func, arg } => {
-            let arg = subst(ctxt, arg, sym, replacement);
-            ctxt.intern(ExprDef::Call { func, arg })
+                self.intern(Binary { lhs, rhs, op })
+            }
+            ExprDef::Unary { op, expr } => {
+                let expr = self.subst(expr, sym, replacement);
+                self.intern(Unary { expr, op })
+            }
+            ExprDef::Call { func, arg } => {
+                let arg = self.subst(arg, sym, replacement);
+                self.call(func, arg)
+            }
         }
     }
 }
 
 // {ret} stmt {k}
 pub fn wp(ctxt: &mut Context, stmt: Stmt, k: Expr) -> Expr {
-    use ExprDef::*;
-    use Op::*;
-    use Uop::*;
-
     match ctxt.get(stmt) {
         StmtDef::Skip => k,
         StmtDef::Seq { first, second } => {
@@ -45,20 +44,18 @@ pub fn wp(ctxt: &mut Context, stmt: Stmt, k: Expr) -> Expr {
             let then_requires = wp(ctxt, then_branch, k);
             let else_requires = wp(ctxt, else_branch, k);
 
-            let then = ctxt.intern(Binary { lhs: cond, rhs: then_requires, op: Implies });
-            let not_cond = ctxt.intern(Unary { op: Not, expr: cond });
-            let else_ = ctxt.intern(Binary { lhs: not_cond, rhs: else_requires, op: Implies });
-            ctxt.intern(Binary { lhs: then, rhs: else_, op: And })
+            let then = ctxt.implies(cond, then_requires);
+            let not_cond = ctxt.not(cond);
+            let else_ = ctxt.implies(not_cond, else_requires);
+            ctxt.and(then, else_)
         }
-        StmtDef::Assign { var, def } => subst(ctxt, k, var, def),
+        StmtDef::Assign { var, def } => ctxt.subst(k, var, def),
+        StmtDef::Assert(expr) => ctxt.and(k, expr),
     }
 }
 
-pub fn vc(
-    ctxt: &mut Context,
-    Program { body, requires, ensures }: Program,
-) -> VerificationCondition {
+pub fn vc(ctxt: &mut Context, Program { body, requires, ensures }: Program) -> Obligation {
     let encoded_body = wp(ctxt, body, ensures);
 
-    VerificationCondition { assume: requires, goal: encoded_body }
+    Obligation { assume: requires, goal: encoded_body }
 }

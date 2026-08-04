@@ -12,6 +12,7 @@ pub enum StmtDef {
     If { cond: Expr, then_branch: Stmt, else_branch: Stmt },
     Assign { var: Sym, def: Expr },
     Seq { first: Stmt, second: Stmt },
+    Assert(Expr),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -40,6 +41,7 @@ pub enum Uop {
 pub enum ExprDef {
     Sym(Sym),
     Const(i32),
+    Bool(bool),
     Binary { op: Op, lhs: Expr, rhs: Expr },
     Unary { op: Uop, expr: Expr },
     Call { func: Sym, arg: Expr },

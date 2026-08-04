@@ -1,6 +1,4 @@
-use crate::{
-    Context, Expr, ExprDef, Intern, Op, Sort, SortDef, Uop, swrite, vcgen::VerificationCondition,
-};
+use crate::{Context, Expr, ExprDef, Intern, Op, Sort, SortDef, Uop, swrite, vcgen::Obligation};
 
 mod string_write {
     #[macro_export]
@@ -50,6 +48,7 @@ pub fn format_expr(sink: &mut String, ctxt: &Context, expr: Expr) {
     match ctxt.get(expr) {
         ExprDef::Sym(var) => swrite!(sink, "{}", ctxt.get(var).name),
         ExprDef::Const(value) => swrite!(sink, "{}", value),
+        ExprDef::Bool(value) => swrite!(sink, "{}", value),
         ExprDef::Call { func, arg } => {
             swrite!(sink, "({} ", &ctxt.get(func).name,);
             format_expr(sink, ctxt, arg);
@@ -91,7 +90,7 @@ fn sort_type(ctxt: &Context, sort: Sort) -> &'static str {
     }
 }
 
-pub fn smt(ctxt: &Context, vc: VerificationCondition) -> String {
+pub fn smt(ctxt: &Context, vc: Obligation) -> String {
     let mut result = String::new();
     let sink = &mut result;
 
@@ -111,7 +110,7 @@ pub fn smt(ctxt: &Context, vc: VerificationCondition) -> String {
         swrite!(sink, ")\n");
     }
 
-    swrite!(sink, "\n(assert (not ");
+    swrite!(sink, "(assert (not ");
     format_expr(sink, ctxt, vc.goal);
     swrite!(sink, "))\n");
 
