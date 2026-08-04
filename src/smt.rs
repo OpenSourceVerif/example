@@ -1,4 +1,6 @@
-use crate::{Context, Expr, ExprDef, Intern, Op, Sort, SortDef, Uop, swrite, vcgen::VerificationCondition};
+use crate::{
+    Context, Expr, ExprDef, Intern, Op, Sort, SortDef, Uop, swrite, vcgen::VerificationCondition,
+};
 
 mod string_write {
     #[macro_export]
