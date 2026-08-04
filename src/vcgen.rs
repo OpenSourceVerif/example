@@ -1,3 +1,5 @@
+use crate::Program;
+
 use super::{Alloc, Context, Expr, ExprDef, Op, Stmt, StmtDef, Sym, Uop};
 
 pub struct VerificationCondition {
@@ -54,9 +56,7 @@ pub fn wp(ctxt: &mut Context, stmt: Stmt, k: Expr) -> Expr {
 
 pub fn vc(
     ctxt: &mut Context,
-    requires: Box<[Expr]>,
-    body: Stmt,
-    ensures: Expr,
+    Program { body, requires, ensures }: Program,
 ) -> VerificationCondition {
     let encoded_body = wp(ctxt, body, ensures);
 

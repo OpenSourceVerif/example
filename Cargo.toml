@@ -6,3 +6,9 @@ edition = "2024"
 [dependencies]
 bumpalo = "3.20.3"
 index_vec = "0.1.4"
+interner = { path = "crates/interner" }
+
+[workspace]
+members = [
+    "crates/interner",
+]

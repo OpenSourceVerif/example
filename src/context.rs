@@ -1,7 +1,8 @@
 use crate::{
     Expr, ExprDef, Name, Sort, SortDef, Stmt, StmtDef, Sym, SymDef, SymDefInterned, Vec,
-    string_interner::StringInterner,
 };
+
+use interner::StringInterner;
 
 pub trait Alloc<I, D> {
     type Ref<'a>

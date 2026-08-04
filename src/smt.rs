@@ -1,4 +1,6 @@
-use crate::{Alloc, Context, Expr, ExprDef, Sort, SortDef, swrite, vcgen::VerificationCondition};
+use crate::{
+    Alloc, Context, Expr, ExprDef, Op, Sort, SortDef, Uop, swrite, vcgen::VerificationCondition,
+};
 
 mod string_write {
     #[macro_export]
@@ -13,6 +15,34 @@ mod string_write {
                 ).unwrap_unchecked();
             }
         }};
+    }
+}
+
+impl Op {
+    pub const fn smt_style(&self) -> &'static str {
+        match self {
+            Op::Implies => "=>",
+            Op::Or => "or",
+            Op::And => "and",
+            Op::Eq => "=",
+            Op::Ne => "distinct",
+            Op::Lt => "<",
+            Op::Le => "<=",
+            Op::Gt => ">",
+            Op::Ge => ">=",
+            Op::Add => "+",
+            Op::Sub => "-",
+            Op::Mul => "*",
+        }
+    }
+}
+
+impl Uop {
+    pub const fn smt_style(&self) -> &'static str {
+        match self {
+            Uop::Not => "not",
+            Uop::Neg => "-",
+        }
     }
 }
 
@@ -65,23 +95,23 @@ pub fn smt(ctxt: &Context, vc: VerificationCondition) -> String {
     let mut result = String::new();
     let sink = &mut result;
 
-    swrite!(sink, "(set-logic QF_UFLIA)\n");
+    swrite!(sink, "(set-logic QF_UFLIA)\n\n");
 
     for sym in ctxt.syms() {
         swrite!(sink, "(declare-{} {} ", sort_type(ctxt, sym.sort), sym.name);
         format_sort(sink, ctxt, sym.sort);
-        swrite!(sink, ")");
+        swrite!(sink, ")\n");
     }
 
     swrite!(sink, "\n");
 
     for expr in vc.assume {
-        swrite!(sink, "(assert \n");
+        swrite!(sink, "(assert ");
         format_expr(sink, ctxt, expr);
         swrite!(sink, ")\n");
     }
 
-    swrite!(sink, "(assert (not \n");
+    swrite!(sink, "\n(assert (not ");
     format_expr(sink, ctxt, vc.goal);
     swrite!(sink, "))\n");
 

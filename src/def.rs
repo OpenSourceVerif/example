@@ -30,38 +30,10 @@ pub enum Op {
     Implies,
 }
 
-impl Op {
-    pub const fn smt_style(&self) -> &'static str {
-        match self {
-            Op::Implies => "=>",
-            Op::Or => "or",
-            Op::And => "and",
-            Op::Eq => "=",
-            Op::Ne => "distinct",
-            Op::Lt => "<",
-            Op::Le => "<=",
-            Op::Gt => ">",
-            Op::Ge => ">=",
-            Op::Add => "+",
-            Op::Sub => "-",
-            Op::Mul => "*",
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Uop {
     Not,
     Neg,
-}
-
-impl Uop {
-    pub const fn smt_style(&self) -> &'static str {
-        match self {
-            Uop::Not => "not",
-            Uop::Neg => "-",
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -90,4 +62,10 @@ pub enum SortDef {
     Int,
     Bool,
     Arrow(Sort, Sort),
+}
+
+pub struct Program {
+    pub body: Stmt,
+    pub requires: Box<[Expr]>,
+    pub ensures: Expr,
 }
