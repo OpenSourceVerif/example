@@ -1,5 +1,5 @@
 use crate::{
-    Intern, Context, Expr, ExprDef, Op, Sort, SortDef, Uop, swrite, vcgen::VerificationCondition,
+    Context, Expr, ExprDef, Intern, Op, Sort, SortDef, Uop, swrite, vcgen::VerificationCondition,
 };
 
 mod string_write {
@@ -8,12 +8,12 @@ mod string_write {
         ($destination:expr, $($format_args:tt)*) => {{
             // Compile-time check: `$destination` must be `&mut String`.
             let destination: &mut ::std::string::String = $destination;
-            unsafe{
-                ::std::fmt::Write::write_fmt(
-                    destination,
-                    ::std::format_args!($($format_args)*),
-                ).unwrap_unchecked();
-            }
+
+            ::std::fmt::Write::write_fmt(
+                destination,
+                ::std::format_args!($($format_args)*),
+            ).expect("infallible");
+
         }};
     }
 }

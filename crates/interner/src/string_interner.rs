@@ -31,7 +31,7 @@ impl<K: Idx> StringInterner<K> {
 
     pub fn intern(&mut self, text: &str) -> K {
         match self.by_text.entry_ref(text) {
-            EntryRef::Occupied(entry) => return *entry.get(),
+            EntryRef::Occupied(entry) => *entry.get(),
             EntryRef::Vacant(entry) => {
                 let allocated: &str = self.arena.alloc_str(text);
 
