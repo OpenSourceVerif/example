@@ -4,11 +4,16 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-bumpalo = "3.20.3"
-index_vec = "0.1.4"
+bumpalo = { workspace = true }
+index_vec = { workspace = true }
 interner = { path = "crates/interner" }
 
 [workspace]
 members = [
     "crates/interner",
 ]
+
+[workspace.dependencies]
+bumpalo = "3.20.3"
+hashbrown = "0.17.1"
+index_vec = "0.1.4"

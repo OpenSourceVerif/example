@@ -1,26 +1,24 @@
-use crate::{
-    Expr, ExprDef, Name, Sort, SortDef, Stmt, StmtDef, Sym, SymDef, SymDefInterned, Vec,
-};
+use crate::{Expr, ExprDef, Name, Sort, SortDef, Stmt, StmtDef, Sym, SymDef, SymDefInterned};
 
-use interner::StringInterner;
+use interner::{ArrayInterner, StringInterner};
 
-pub trait Alloc<I, D> {
+pub trait Intern<I, D> {
     type Ref<'a>
     where
         Self: 'a;
 
-    fn alloc(&mut self, def: D) -> I;
+    fn intern(&mut self, def: D) -> I;
 
     fn get<'a>(&'a self, idx: I) -> Self::Ref<'a>;
 }
 
 #[derive(Default)]
 pub struct Context {
-    stmts: Vec<Stmt, StmtDef>,
-    exprs: Vec<Expr, ExprDef>,
+    stmts: ArrayInterner<Stmt, StmtDef>,
+    exprs: ArrayInterner<Expr, ExprDef>,
     sym_names: StringInterner<Name>,
-    syms: Vec<Sym, SymDefInterned>,
-    sorts: Vec<Sort, SortDef>,
+    syms: ArrayInterner<Sym, SymDefInterned>,
+    sorts: ArrayInterner<Sort, SortDef>,
 }
 
 impl Context {
@@ -33,14 +31,14 @@ impl Context {
     }
 }
 
-impl Alloc<Expr, ExprDef> for Context {
+impl Intern<Expr, ExprDef> for Context {
     type Ref<'a>
         = ExprDef
     where
         Self: 'a;
 
-    fn alloc(&mut self, expr: ExprDef) -> Expr {
-        self.exprs.push(expr)
+    fn intern(&mut self, expr: ExprDef) -> Expr {
+        self.exprs.intern(expr)
     }
 
     fn get(&self, idx: Expr) -> ExprDef {
@@ -48,14 +46,14 @@ impl Alloc<Expr, ExprDef> for Context {
     }
 }
 
-impl Alloc<Stmt, StmtDef> for Context {
+impl Intern<Stmt, StmtDef> for Context {
     type Ref<'a>
         = StmtDef
     where
         Self: 'a;
 
-    fn alloc(&mut self, stmt: StmtDef) -> Stmt {
-        self.stmts.push(stmt)
+    fn intern(&mut self, stmt: StmtDef) -> Stmt {
+        self.stmts.intern(stmt)
     }
 
     fn get(&self, idx: Stmt) -> StmtDef {
@@ -63,15 +61,15 @@ impl Alloc<Stmt, StmtDef> for Context {
     }
 }
 
-impl<'input> Alloc<Sym, SymDef<'input>> for Context {
+impl<'input> Intern<Sym, SymDef<'input>> for Context {
     type Ref<'a>
         = SymDef<'a>
     where
         Self: 'a;
 
-    fn alloc(&mut self, sym: SymDef<'input>) -> Sym {
+    fn intern(&mut self, sym: SymDef<'input>) -> Sym {
         let name = self.sym_names.intern(sym.name);
-        self.syms.push(SymDefInterned { name, sort: sym.sort })
+        self.syms.intern(SymDefInterned { name, sort: sym.sort })
     }
 
     fn get<'a>(&'a self, idx: Sym) -> SymDef<'a> {
@@ -82,17 +80,46 @@ impl<'input> Alloc<Sym, SymDef<'input>> for Context {
     }
 }
 
-impl Alloc<Sort, SortDef> for Context {
+impl Intern<Sort, SortDef> for Context {
     type Ref<'a>
         = SortDef
     where
         Self: 'a;
 
-    fn alloc(&mut self, sort: SortDef) -> Sort {
-        self.sorts.push(sort)
+    fn intern(&mut self, sort: SortDef) -> Sort {
+        self.sorts.intern(sort)
     }
 
     fn get(&self, idx: Sort) -> SortDef {
         self.sorts[idx]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Context, Intern};
+    use crate::{Expr, ExprDef, Sort, SortDef, Stmt, StmtDef, Sym, SymDef};
+
+    #[test]
+    fn interner_works() {
+        let mut context = Context::default();
+
+        let int: Sort = context.intern(SortDef::Int);
+        let same_int: Sort = context.intern(SortDef::Int);
+        assert_eq!(same_int, int);
+
+        let x: Sym = context.intern(SymDef { name: "x", sort: int });
+        let same_x: Sym = context.intern(SymDef { name: "x", sort: int });
+        assert_eq!(same_x, x);
+
+        let x_expr: Expr = context.intern(ExprDef::Sym(x));
+        let same_x_expr: Expr = context.intern(ExprDef::Sym(x));
+        assert_eq!(same_x_expr, x_expr);
+
+        let assignment: Stmt = context.intern(StmtDef::Assign { var: x, def: x_expr });
+        let same_assignment: Stmt = context.intern(StmtDef::Assign { var: x, def: x_expr });
+        assert_eq!(same_assignment, assignment);
+
+        assert_eq!(context.syms().count(), 1);
     }
 }

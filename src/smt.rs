@@ -1,5 +1,5 @@
 use crate::{
-    Alloc, Context, Expr, ExprDef, Op, Sort, SortDef, Uop, swrite, vcgen::VerificationCondition,
+    Intern, Context, Expr, ExprDef, Op, Sort, SortDef, Uop, swrite, vcgen::VerificationCondition,
 };
 
 mod string_write {

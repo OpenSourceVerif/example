@@ -1,5 +1,5 @@
 use example::{
-    Alloc, Context, Expr, ExprDef::*, Op::*, Program, Sort, SortDef::*, Stmt, StmtDef::*, Sym,
+    Intern, Context, Expr, ExprDef::*, Op::*, Program, Sort, SortDef::*, Stmt, StmtDef::*, Sym,
     SymDef, smt, vc,
 };
 
@@ -9,16 +9,16 @@ use std::{
 };
 
 fn add_assign(ctxt: &mut Context, var: Sym, amount: i32) -> Stmt {
-    let lhs = ctxt.alloc(Sym(var));
-    let rhs = ctxt.alloc(Const(amount));
-    let value = ctxt.alloc(Binary { op: Add, lhs, rhs });
-    ctxt.alloc(Assign { var, def: value })
+    let lhs = ctxt.intern(Sym(var));
+    let rhs = ctxt.intern(Const(amount));
+    let value = ctxt.intern(Binary { op: Add, lhs, rhs });
+    ctxt.intern(Assign { var, def: value })
 }
 
 fn positive(ctxt: &mut Context, var: Sym) -> Expr {
-    let lhs = ctxt.alloc(Sym(var));
-    let zero = ctxt.alloc(Const(0));
-    ctxt.alloc(Binary { op: Gt, lhs, rhs: zero })
+    let lhs = ctxt.intern(Sym(var));
+    let zero = ctxt.intern(Const(0));
+    ctxt.intern(Binary { op: Gt, lhs, rhs: zero })
 }
 
 fn conditional_add(
@@ -32,32 +32,32 @@ fn conditional_add(
     let then_branch = add_assign(ctxt, target_var, then_amount);
     let else_branch = add_assign(ctxt, target_var, else_amount);
 
-    ctxt.alloc(If { cond, then_branch, else_branch })
+    ctxt.intern(If { cond, then_branch, else_branch })
 }
 
 fn test_program(ctxt: &mut Context) -> Program {
-    let int: Sort = ctxt.alloc(Int);
+    let int: Sort = ctxt.intern(Int);
 
-    let x = ctxt.alloc(SymDef { name: "x", sort: int });
-    let y = ctxt.alloc(SymDef { name: "y", sort: int });
-    let ret = ctxt.alloc(SymDef { name: "ret", sort: int });
-    let result = ctxt.alloc(Sym(ret));
+    let x = ctxt.intern(SymDef { name: "x", sort: int });
+    let y = ctxt.intern(SymDef { name: "y", sort: int });
+    let ret = ctxt.intern(SymDef { name: "ret", sort: int });
+    let result = ctxt.intern(Sym(ret));
 
-    let zero = ctxt.alloc(Const(0));
-    let four = ctxt.alloc(Const(4));
-    let six = ctxt.alloc(Const(6));
+    let zero = ctxt.intern(Const(0));
+    let four = ctxt.intern(Const(4));
+    let six = ctxt.intern(Const(6));
 
-    let initialize = ctxt.alloc(Assign { var: ret, def: zero });
+    let initialize = ctxt.intern(Assign { var: ret, def: zero });
     let first_if = conditional_add(ctxt, x, ret, 1, 2);
     let second_if = conditional_add(ctxt, y, ret, 3, 4);
-    let remaining = ctxt.alloc(Seq { first: first_if, second: second_if });
-    let body = ctxt.alloc(Seq { first: initialize, second: remaining });
+    let remaining = ctxt.intern(Seq { first: first_if, second: second_if });
+    let body = ctxt.intern(Seq { first: initialize, second: remaining });
 
-    let lower_bound = ctxt.alloc(Binary { op: Ge, lhs: result, rhs: four });
-    let upper_bound = ctxt.alloc(Binary { op: Le, lhs: result, rhs: six });
+    let lower_bound = ctxt.intern(Binary { op: Ge, lhs: result, rhs: four });
+    let upper_bound = ctxt.intern(Binary { op: Le, lhs: result, rhs: six });
 
     let requires = Box::new([]);
-    let ensures = ctxt.alloc(Binary { op: And, lhs: lower_bound, rhs: upper_bound });
+    let ensures = ctxt.intern(Binary { op: And, lhs: lower_bound, rhs: upper_bound });
 
     Program { body, requires, ensures }
 }

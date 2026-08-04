@@ -1,6 +1,6 @@
 use crate::Program;
 
-use super::{Alloc, Context, Expr, ExprDef, Op, Stmt, StmtDef, Sym, Uop};
+use super::{Intern, Context, Expr, ExprDef, Op, Stmt, StmtDef, Sym, Uop};
 
 pub struct VerificationCondition {
     pub assume: Box<[Expr]>,
@@ -16,15 +16,15 @@ pub fn subst(ctxt: &mut Context, expr: Expr, sym: Sym, replacement: Expr) -> Exp
             let lhs = subst(ctxt, lhs, sym, replacement);
             let rhs = subst(ctxt, rhs, sym, replacement);
 
-            ctxt.alloc(ExprDef::Binary { lhs, rhs, op })
+            ctxt.intern(ExprDef::Binary { lhs, rhs, op })
         }
         ExprDef::Unary { op, expr } => {
             let expr = subst(ctxt, expr, sym, replacement);
-            ctxt.alloc(ExprDef::Unary { expr, op })
+            ctxt.intern(ExprDef::Unary { expr, op })
         }
         ExprDef::Call { func, arg } => {
             let arg = subst(ctxt, arg, sym, replacement);
-            ctxt.alloc(ExprDef::Call { func, arg })
+            ctxt.intern(ExprDef::Call { func, arg })
         }
     }
 }
@@ -45,10 +45,10 @@ pub fn wp(ctxt: &mut Context, stmt: Stmt, k: Expr) -> Expr {
             let then_requires = wp(ctxt, then_branch, k);
             let else_requires = wp(ctxt, else_branch, k);
 
-            let then = ctxt.alloc(Binary { lhs: cond, rhs: then_requires, op: Implies });
-            let not_cond = ctxt.alloc(Unary { op: Not, expr: cond });
-            let else_ = ctxt.alloc(Binary { lhs: not_cond, rhs: else_requires, op: Implies });
-            ctxt.alloc(Binary { lhs: then, rhs: else_, op: And })
+            let then = ctxt.intern(Binary { lhs: cond, rhs: then_requires, op: Implies });
+            let not_cond = ctxt.intern(Unary { op: Not, expr: cond });
+            let else_ = ctxt.intern(Binary { lhs: not_cond, rhs: else_requires, op: Implies });
+            ctxt.intern(Binary { lhs: then, rhs: else_, op: And })
         }
         StmtDef::Assign { var, def } => subst(ctxt, k, var, def),
     }

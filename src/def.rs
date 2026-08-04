@@ -6,7 +6,7 @@ define_index_type! { pub struct Sym = u32; }
 define_index_type! { pub struct Sort = u32; }
 define_index_type! { pub struct Name = u32; }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum StmtDef {
     Skip,
     If { cond: Expr, then_branch: Stmt, else_branch: Stmt },
@@ -14,7 +14,7 @@ pub enum StmtDef {
     Seq { first: Stmt, second: Stmt },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Op {
     Add,
     Sub,
@@ -30,13 +30,13 @@ pub enum Op {
     Implies,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Uop {
     Not,
     Neg,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ExprDef {
     Sym(Sym),
     Const(i32),
@@ -51,13 +51,13 @@ pub struct SymDef<'c> {
     pub sort: Sort,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SymDefInterned {
     pub name: Name,
     pub sort: Sort,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SortDef {
     Int,
     Bool,
