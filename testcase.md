@@ -1,4 +1,5 @@
 ```rs
+// requires q
 // ensures p(result)
 fn f(x: int, y:int) -> int{
     let mut ret = 0;
@@ -17,3 +18,5 @@ fn f(x: int, y:int) -> int{
     ret
 }
 ```
+
+// q => wp(body, p(result))

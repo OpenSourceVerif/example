@@ -1,63 +1,97 @@
-use crate::{Expr, ExprDef, Stmt, StmtDef, Var, Vec};
-use std::ops::{Index, IndexMut};
+use crate::{
+    Expr, ExprDef, Name, Sort, SortDef, Stmt, StmtDef, Sym, SymDef, SymDefInterned, Vec,
+    string_interner::StringInterner,
+};
 
-pub trait Alloc<D> {
-    type Idx;
+pub trait Alloc<I, D> {
+    type Ref<'a>
+    where
+        Self: 'a;
 
-    fn alloc(&mut self, def: D) -> Self::Idx;
+    fn alloc(&mut self, def: D) -> I;
+
+    fn get<'a>(&'a self, idx: I) -> Self::Ref<'a>;
 }
 
 #[derive(Default)]
 pub struct Context {
     stmts: Vec<Stmt, StmtDef>,
     exprs: Vec<Expr, ExprDef>,
-    vars: Vec<Var, Box<str>>,
+    sym_names: StringInterner<Name>,
+    syms: Vec<Sym, SymDefInterned>,
+    sorts: Vec<Sort, SortDef>,
 }
 
-impl Alloc<ExprDef> for Context {
-    type Idx = Expr;
+impl Context {
+    pub fn syms<'a>(&'a self) -> impl Iterator<Item = SymDef<'a>> {
+        self.syms.iter().map(|SymDefInterned { name, sort }| {
+            let name = &self.sym_names[*name];
+
+            SymDef { name, sort: *sort }
+        })
+    }
+}
+
+impl Alloc<Expr, ExprDef> for Context {
+    type Ref<'a>
+        = ExprDef
+    where
+        Self: 'a;
 
     fn alloc(&mut self, expr: ExprDef) -> Expr {
         self.exprs.push(expr)
     }
+
+    fn get(&self, idx: Expr) -> ExprDef {
+        self.exprs[idx]
+    }
 }
 
-impl Alloc<StmtDef> for Context {
-    type Idx = Stmt;
+impl Alloc<Stmt, StmtDef> for Context {
+    type Ref<'a>
+        = StmtDef
+    where
+        Self: 'a;
 
     fn alloc(&mut self, stmt: StmtDef) -> Stmt {
         self.stmts.push(stmt)
     }
-}
 
-impl Alloc<Box<str>> for Context {
-    type Idx = Var;
-
-    fn alloc(&mut self, name: Box<str>) -> Var {
-        self.vars.push(name)
+    fn get(&self, idx: Stmt) -> StmtDef {
+        self.stmts[idx]
     }
 }
 
-impl Index<Expr> for Context {
-    type Output = ExprDef;
+impl<'input> Alloc<Sym, SymDef<'input>> for Context {
+    type Ref<'a>
+        = SymDef<'a>
+    where
+        Self: 'a;
 
-    fn index(&self, index: Expr) -> &Self::Output {
-        &self.exprs[index]
+    fn alloc(&mut self, sym: SymDef<'input>) -> Sym {
+        let name = self.sym_names.intern(sym.name);
+        self.syms.push(SymDefInterned { name, sort: sym.sort })
+    }
+
+    fn get<'a>(&'a self, idx: Sym) -> SymDef<'a> {
+        let SymDefInterned { name, sort } = self.syms[idx];
+        let name = &self.sym_names[name];
+
+        SymDef { name, sort }
     }
 }
 
-impl Index<Stmt> for Context {
-    type Output = StmtDef;
+impl Alloc<Sort, SortDef> for Context {
+    type Ref<'a>
+        = SortDef
+    where
+        Self: 'a;
 
-    fn index(&self, index: Stmt) -> &Self::Output {
-        &self.stmts[index]
+    fn alloc(&mut self, sort: SortDef) -> Sort {
+        self.sorts.push(sort)
     }
-}
 
-impl Index<Var> for Context {
-    type Output = str;
-
-    fn index(&self, index: Var) -> &Self::Output {
-        &self.vars[index]
+    fn get(&self, idx: Sort) -> SortDef {
+        self.sorts[idx]
     }
 }

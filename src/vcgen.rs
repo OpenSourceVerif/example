@@ -1,34 +1,39 @@
-use super::{Alloc, Context, Expr, ExprDef, Op, Stmt, StmtDef, Uop, Var};
+use super::{Alloc, Context, Expr, ExprDef, Op, Stmt, StmtDef, Sym, Uop};
 
-pub fn subst(ctxt: &mut Context, expr: Expr, var: Var, replacement: Expr) -> Expr {
-    match ctxt[expr] {
-        ExprDef::Var(find) if find == var => replacement,
-        ExprDef::Var(_) => expr,
+pub struct VerificationCondition {
+    pub assume: Box<[Expr]>,
+    pub goal: Expr,
+}
+
+pub fn subst(ctxt: &mut Context, expr: Expr, sym: Sym, replacement: Expr) -> Expr {
+    match ctxt.get(expr) {
+        ExprDef::Sym(find) if find == sym => replacement,
+        ExprDef::Sym(_) => expr,
         ExprDef::Const(_) => expr,
         ExprDef::Binary { lhs, rhs, op } => {
-            let lhs = subst(ctxt, lhs, var, replacement);
-            let rhs = subst(ctxt, rhs, var, replacement);
+            let lhs = subst(ctxt, lhs, sym, replacement);
+            let rhs = subst(ctxt, rhs, sym, replacement);
 
             ctxt.alloc(ExprDef::Binary { lhs, rhs, op })
         }
         ExprDef::Unary { op, expr } => {
-            let expr = subst(ctxt, expr, var, replacement);
+            let expr = subst(ctxt, expr, sym, replacement);
             ctxt.alloc(ExprDef::Unary { expr, op })
         }
         ExprDef::Call { func, arg } => {
-            let arg = subst(ctxt, arg, var, replacement);
+            let arg = subst(ctxt, arg, sym, replacement);
             ctxt.alloc(ExprDef::Call { func, arg })
         }
     }
 }
 
-// {ret} s {k}
-pub fn wp(ctxt: &mut Context, s: Stmt, k: Expr) -> Expr {
+// {ret} stmt {k}
+pub fn wp(ctxt: &mut Context, stmt: Stmt, k: Expr) -> Expr {
     use ExprDef::*;
     use Op::*;
     use Uop::*;
 
-    match ctxt[s] {
+    match ctxt.get(stmt) {
         StmtDef::Skip => k,
         StmtDef::Seq { first, second } => {
             let intermediate = wp(ctxt, second, k);
@@ -45,4 +50,15 @@ pub fn wp(ctxt: &mut Context, s: Stmt, k: Expr) -> Expr {
         }
         StmtDef::Assign { var, def } => subst(ctxt, k, var, def),
     }
+}
+
+pub fn vc(
+    ctxt: &mut Context,
+    requires: Box<[Expr]>,
+    body: Stmt,
+    ensures: Expr,
+) -> VerificationCondition {
+    let encoded_body = wp(ctxt, body, ensures);
+
+    VerificationCondition { assume: requires, goal: encoded_body }
 }
