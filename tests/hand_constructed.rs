@@ -1,4 +1,4 @@
-use example::{Context, Expr, Program, Stmt, Sym, smt, vc};
+use example::{Context, Expr, Program, Stmt, Sym, smt};
 
 use std::{
     io::Write,
@@ -92,7 +92,7 @@ fn z3(script: &str) -> String {
 fn the_result_is_always_between_four_and_six() {
     let mut ctxt = Context::default();
     let program = test_program(&mut ctxt);
-    let verification = vc(&mut ctxt, program);
+    let verification = ctxt.vc(program);
     let script = smt(&ctxt, verification);
 
     println!("{:}", script);

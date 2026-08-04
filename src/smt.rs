@@ -1,4 +1,4 @@
-use crate::{Context, Expr, ExprDef, Intern, Op, Sort, SortDef, Uop, swrite, vcgen::Obligation};
+use crate::{Context, Expr, ExprDef, Intern, Op, Sort, SortDef, Uop, swrite, vcgen::VerificationCondition};
 
 mod string_write {
     #[macro_export]
@@ -90,7 +90,7 @@ fn sort_type(ctxt: &Context, sort: Sort) -> &'static str {
     }
 }
 
-pub fn smt(ctxt: &Context, vc: Obligation) -> String {
+pub fn smt(ctxt: &Context, vc: VerificationCondition) -> String {
     let mut result = String::new();
     let sink = &mut result;
 

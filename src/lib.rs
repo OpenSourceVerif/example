@@ -9,4 +9,4 @@ pub use def::{
     Uop,
 };
 pub use smt::{format_expr, smt};
-pub use vcgen::{Obligation, vc, wp};
+pub use vcgen::VerificationCondition;

@@ -2,7 +2,7 @@ use crate::Program;
 
 use super::{Context, Expr, ExprDef, ExprDef::*, Intern, Stmt, StmtDef, Sym};
 
-pub struct Obligation {
+pub struct VerificationCondition {
     pub assume: Box<[Expr]>,
     pub goal: Expr,
 }
@@ -30,32 +30,32 @@ impl Context {
             }
         }
     }
-}
 
-// {ret} stmt {k}
-pub fn wp(ctxt: &mut Context, stmt: Stmt, k: Expr) -> Expr {
-    match ctxt.get(stmt) {
-        StmtDef::Skip => k,
-        StmtDef::Seq { first, second } => {
-            let intermediate = wp(ctxt, second, k);
-            wp(ctxt, first, intermediate)
-        }
-        StmtDef::If { cond, then_branch, else_branch } => {
-            let then_requires = wp(ctxt, then_branch, k);
-            let else_requires = wp(ctxt, else_branch, k);
+    // {ret} stmt {k}
+    pub fn wp(&mut self, stmt: Stmt, k: Expr) -> Expr {
+        match self.get(stmt) {
+            StmtDef::Skip => k,
+            StmtDef::Seq { first, second } => {
+                let intermediate = self.wp(second, k);
+                self.wp(first, intermediate)
+            }
+            StmtDef::If { cond, then_branch, else_branch } => {
+                let then_requires = self.wp(then_branch, k);
+                let else_requires = self.wp(else_branch, k);
 
-            let then = ctxt.implies(cond, then_requires);
-            let not_cond = ctxt.not(cond);
-            let else_ = ctxt.implies(not_cond, else_requires);
-            ctxt.and(then, else_)
+                let then = self.implies(cond, then_requires);
+                let not_cond = self.not(cond);
+                let else_ = self.implies(not_cond, else_requires);
+                self.and(then, else_)
+            }
+            StmtDef::Assign { var, def } => self.subst(k, var, def),
+            StmtDef::Assert(expr) => self.and(k, expr),
         }
-        StmtDef::Assign { var, def } => ctxt.subst(k, var, def),
-        StmtDef::Assert(expr) => ctxt.and(k, expr),
     }
-}
 
-pub fn vc(ctxt: &mut Context, Program { body, requires, ensures }: Program) -> Obligation {
-    let encoded_body = wp(ctxt, body, ensures);
+    pub fn vc(&mut self, Program { body, requires, ensures }: Program) -> VerificationCondition {
+        let encoded_body = self.wp(body, ensures);
 
-    Obligation { assume: requires, goal: encoded_body }
+        VerificationCondition { assume: requires, goal: encoded_body }
+    }
 }
