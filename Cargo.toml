@@ -9,9 +9,7 @@ index_vec = { workspace = true }
 interner = { path = "crates/interner" }
 
 [workspace]
-members = [
-    "crates/interner",
-]
+members = ["crates/interner"]
 
 [workspace.dependencies]
 bumpalo = "3.20.3"

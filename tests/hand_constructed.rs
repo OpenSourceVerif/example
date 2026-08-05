@@ -53,7 +53,7 @@ fn test_program(ctxt: &mut Context) -> Program {
     let lower_bound = ctxt.ge(result, four);
     let upper_bound = ctxt.le(result, six);
 
-    let requires = Box::new([]);
+    let requires = ctxt.bool_lit(true);
     let ensures = ctxt.and(lower_bound, upper_bound);
 
     Program { body, requires, ensures }
@@ -92,7 +92,19 @@ fn z3(script: &str) -> String {
 fn the_result_is_always_between_four_and_six() {
     let mut ctxt = Context::default();
     let program = test_program(&mut ctxt);
-    let verification = ctxt.vc(program);
+    let verification = ctxt.vc_by_wp(program);
+    let script = smt(&ctxt, verification);
+
+    println!("{:}", script);
+
+    assert_eq!(z3(&script), "unsat");
+}
+
+#[test]
+fn forward_execution_proves_the_result_is_always_between_four_and_six() {
+    let mut ctxt = Context::default();
+    let program = test_program(&mut ctxt);
+    let verification = ctxt.vc_by_forward(program);
     let script = smt(&ctxt, verification);
 
     println!("{:}", script);

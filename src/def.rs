@@ -68,6 +68,6 @@ pub enum SortDef {
 
 pub struct Program {
     pub body: Stmt,
-    pub requires: Box<[Expr]>,
+    pub requires: Expr,
     pub ensures: Expr,
 }

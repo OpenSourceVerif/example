@@ -1,5 +1,5 @@
 use crate::{
-    Context, Expr, ExprDef, Intern, Op, Sort, SortDef, Uop, swrite, vcgen::VerificationCondition,
+    Context, Expr, ExprDef, Intern, Op, Sort, SortDef, Uop, swrite,
 };
 
 mod string_write {
@@ -92,7 +92,7 @@ fn sort_type(ctxt: &Context, sort: Sort) -> &'static str {
     }
 }
 
-pub fn smt(ctxt: &Context, vc: VerificationCondition) -> String {
+pub fn smt(ctxt: &Context, vc: Expr) -> String {
     let mut result = String::new();
     let sink = &mut result;
 
@@ -106,14 +106,8 @@ pub fn smt(ctxt: &Context, vc: VerificationCondition) -> String {
 
     swrite!(sink, "\n");
 
-    for expr in vc.assume {
-        swrite!(sink, "(assert ");
-        format_expr(sink, ctxt, expr);
-        swrite!(sink, ")\n");
-    }
-
     swrite!(sink, "(assert (not ");
-    format_expr(sink, ctxt, vc.goal);
+    format_expr(sink, ctxt, vc);
     swrite!(sink, "))\n");
 
     swrite!(sink, "\n(check-sat)\n(get-model)\n");

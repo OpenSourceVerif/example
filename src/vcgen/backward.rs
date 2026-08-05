@@ -1,11 +1,4 @@
-use crate::Program;
-
-use super::{Context, Expr, ExprDef, ExprDef::*, Intern, Stmt, StmtDef, Sym};
-
-pub struct VerificationCondition {
-    pub assume: Box<[Expr]>,
-    pub goal: Expr,
-}
+use crate::{Context, Expr, ExprDef, Intern, Program, Stmt, StmtDef, Sym, vcgen::VC};
 
 impl Context {
     pub fn subst(&mut self, expr: Expr, sym: Sym, replacement: Expr) -> Expr {
@@ -18,11 +11,11 @@ impl Context {
                 let lhs = self.subst(lhs, sym, replacement);
                 let rhs = self.subst(rhs, sym, replacement);
 
-                self.intern(Binary { lhs, rhs, op })
+                self.binary(op, lhs, rhs)
             }
             ExprDef::Unary { op, expr } => {
                 let expr = self.subst(expr, sym, replacement);
-                self.intern(Unary { expr, op })
+                self.unary(op, expr)
             }
             ExprDef::Call { func, arg } => {
                 let arg = self.subst(arg, sym, replacement);
@@ -53,9 +46,9 @@ impl Context {
         }
     }
 
-    pub fn vc(&mut self, Program { body, requires, ensures }: Program) -> VerificationCondition {
-        let encoded_body = self.wp(body, ensures);
+    pub fn vc_by_wp(&mut self, Program { body, requires, ensures }: Program) -> VC {
+        let transformed_ensures = self.wp(body, ensures);
 
-        VerificationCondition { assume: requires, goal: encoded_body }
+        self.implies(requires, transformed_ensures)
     }
 }
