@@ -1,19 +1,9 @@
 use index_vec::define_index_type;
 
-define_index_type! { pub struct Expr = u32; }
-define_index_type! { pub struct Stmt = u32; }
+define_index_type! { pub struct Term = u32; }
 define_index_type! { pub struct Sym = u32; }
 define_index_type! { pub struct Sort = u32; }
 define_index_type! { pub struct Name = u32; }
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum StmtDef {
-    Skip,
-    If { cond: Expr, then_branch: Stmt, else_branch: Stmt },
-    Assign { var: Sym, def: Expr },
-    Seq { first: Stmt, second: Stmt },
-    Assert(Expr),
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Op {
@@ -37,14 +27,16 @@ pub enum Uop {
     Neg,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ExprDef {
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum TermDef {
     Sym(Sym),
-    Const(i32),
+    Const(i128),
     Bool(bool),
-    Binary { op: Op, lhs: Expr, rhs: Expr },
-    Unary { op: Uop, expr: Expr },
-    Call { func: Sym, arg: Expr },
+    Unit,
+    Binary { op: Op, lhs: Term, rhs: Term },
+    Unary { op: Uop, expr: Term },
+    Call { func: Sym, arg: Term },
+    Tuple(Box<[Term]>),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -64,10 +56,4 @@ pub enum SortDef {
     Int,
     Bool,
     Arrow(Sort, Sort),
-}
-
-pub struct Program {
-    pub body: Stmt,
-    pub requires: Expr,
-    pub ensures: Expr,
 }

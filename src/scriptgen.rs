@@ -1,6 +1,4 @@
-use crate::{
-    Context, Expr, ExprDef, Intern, Op, Sort, SortDef, Uop, swrite,
-};
+use crate::{swrite, Context, TermDef, Intern, Op, Sort, SortDef, Term, Uop};
 
 mod string_write {
     #[macro_export]
@@ -46,28 +44,29 @@ impl Uop {
     }
 }
 
-pub fn format_expr(sink: &mut String, ctxt: &Context, expr: Expr) {
+pub fn format_expr(sink: &mut String, ctxt: &Context, expr: Term) {
     match ctxt.get(expr) {
-        ExprDef::Sym(var) => swrite!(sink, "{}", ctxt.get(var).name),
-        ExprDef::Const(value) => swrite!(sink, "{}", value),
-        ExprDef::Bool(value) => swrite!(sink, "{}", value),
-        ExprDef::Call { func, arg } => {
+        TermDef::Sym(var) => swrite!(sink, "{}", ctxt.get(var).name),
+        TermDef::Const(value) => swrite!(sink, "{}", value),
+        TermDef::Bool(value) => swrite!(sink, "{}", value),
+        TermDef::Call { func, arg } => {
             swrite!(sink, "({} ", &ctxt.get(func).name,);
             format_expr(sink, ctxt, arg);
             swrite!(sink, ")");
         }
-        ExprDef::Unary { op, expr } => {
+        TermDef::Unary { op, expr } => {
             swrite!(sink, "({} ", op.smt_style());
             format_expr(sink, ctxt, expr);
             swrite!(sink, ")");
         }
-        ExprDef::Binary { op, lhs, rhs } => {
+        TermDef::Binary { op, lhs, rhs } => {
             swrite!(sink, "({} ", op.smt_style());
             format_expr(sink, ctxt, lhs);
             swrite!(sink, " ");
             format_expr(sink, ctxt, rhs);
             swrite!(sink, ")");
         }
+        TermDef::Unit => swrite!(sink, "()"),
     }
 }
 
@@ -92,11 +91,12 @@ fn sort_type(ctxt: &Context, sort: Sort) -> &'static str {
     }
 }
 
-pub fn smt(ctxt: &Context, vc: Expr) -> String {
+pub fn smt(ctxt: &Context, vc: Term) -> String {
     let mut result = String::new();
     let sink = &mut result;
 
-    swrite!(sink, "(set-logic QF_UFLIA)\n\n");
+    // Symbolic MIR can contain multiplication of two symbolic integers.
+    swrite!(sink, "(set-logic ALL)\n\n");
 
     for sym in ctxt.syms() {
         swrite!(sink, "(declare-{} {} ", sort_type(ctxt, sym.sort), sym.name);
@@ -113,4 +113,20 @@ pub fn smt(ctxt: &Context, vc: Expr) -> String {
     swrite!(sink, "\n(check-sat)\n(get-model)\n");
 
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{format_expr, Context};
+
+    #[test]
+    fn formats_full_width_integer_constants() {
+        let mut context = Context::default();
+        let value = context.int_lit(i128::MIN);
+        let mut formatted = String::new();
+
+        format_expr(&mut formatted, &context, value);
+
+        assert_eq!(formatted, i128::MIN.to_string());
+    }
 }

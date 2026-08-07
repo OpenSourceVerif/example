@@ -1,4 +1,4 @@
-use crate::{Expr, ExprDef, Name, Sort, SortDef, Stmt, StmtDef, Sym, SymDef, SymDefInterned};
+use crate::{TermDef, Name, Sort, SortDef, Sym, SymDef, SymDefInterned, Term};
 
 mod shorthand;
 
@@ -16,8 +16,7 @@ pub trait Intern<I, D> {
 
 #[derive(Default)]
 pub struct Context {
-    stmts: ArrayInterner<Stmt, StmtDef>,
-    exprs: ArrayInterner<Expr, ExprDef>,
+    exprs: ArrayInterner<Term, TermDef>,
     sym_names: StringInterner<Name>,
     syms: ArrayInterner<Sym, SymDefInterned>,
     sorts: ArrayInterner<Sort, SortDef>,
@@ -33,33 +32,18 @@ impl Context {
     }
 }
 
-impl Intern<Expr, ExprDef> for Context {
+impl Intern<Term, TermDef> for Context {
     type Ref<'a>
-        = ExprDef
+        = TermDef
     where
         Self: 'a;
 
-    fn intern(&mut self, expr: ExprDef) -> Expr {
+    fn intern(&mut self, expr: TermDef) -> Term {
         self.exprs.intern(expr)
     }
 
-    fn get(&self, idx: Expr) -> ExprDef {
+    fn get(&self, idx: Term) -> TermDef {
         self.exprs[idx]
-    }
-}
-
-impl Intern<Stmt, StmtDef> for Context {
-    type Ref<'a>
-        = StmtDef
-    where
-        Self: 'a;
-
-    fn intern(&mut self, stmt: StmtDef) -> Stmt {
-        self.stmts.intern(stmt)
-    }
-
-    fn get(&self, idx: Stmt) -> StmtDef {
-        self.stmts[idx]
     }
 }
 
@@ -100,7 +84,7 @@ impl Intern<Sort, SortDef> for Context {
 #[cfg(test)]
 mod tests {
     use super::{Context, Intern};
-    use crate::{Expr, ExprDef, Sort, SortDef, Stmt, StmtDef, Sym, SymDef};
+    use crate::{TermDef, Sort, SortDef, Sym, SymDef, Term};
 
     #[test]
     fn interner_works() {
@@ -114,13 +98,9 @@ mod tests {
         let same_x: Sym = context.intern(SymDef { name: "x", sort: int });
         assert_eq!(same_x, x);
 
-        let x_expr: Expr = context.intern(ExprDef::Sym(x));
-        let same_x_expr: Expr = context.intern(ExprDef::Sym(x));
+        let x_expr: Term = context.intern(TermDef::Sym(x));
+        let same_x_expr: Term = context.intern(TermDef::Sym(x));
         assert_eq!(same_x_expr, x_expr);
-
-        let assignment: Stmt = context.intern(StmtDef::Assign { var: x, def: x_expr });
-        let same_assignment: Stmt = context.intern(StmtDef::Assign { var: x, def: x_expr });
-        assert_eq!(same_assignment, assignment);
 
         assert_eq!(context.syms().count(), 1);
     }

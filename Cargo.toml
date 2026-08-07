@@ -7,6 +7,7 @@ edition = "2024"
 bumpalo = { workspace = true }
 index_vec = { workspace = true }
 interner = { path = "crates/interner" }
+smallvec = "1.15.2"
 
 [package.metadata.rust-analyzer]
 rustc_private = true

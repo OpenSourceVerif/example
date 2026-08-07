@@ -1,13 +1,11 @@
 use crate::{
-    Context, Expr,
-    ExprDef::{self, *},
+    Context,
+    TermDef::{self, *},
     Intern, Op,
     Op::*,
     Sort, SortDef,
     SortDef::*,
-    Stmt,
-    StmtDef::*,
-    Sym, SymDef,
+    Sym, SymDef, Term,
     Uop::{self, *},
 };
 
@@ -25,42 +23,30 @@ macro_rules! define_constructors {
 
 define_constructors! {
 
-Expr {
+Term {
     sym(sym: Sym) Sym(sym);
-    int_lit(value: i32) Const(value);
-    bool_lit(value: bool) ExprDef::Bool(value);
+    int_lit(value: i128) Const(value);
+    bool_lit(value: bool) TermDef::Bool(value);
 
-    call(func: Sym, arg: Expr) Call { func, arg };
+    call(func: Sym, arg: Term) Call { func, arg };
 
-    binary(op: Op, lhs: Expr, rhs: Expr) Binary { op, lhs, rhs };
-    add(lhs: Expr, rhs: Expr) Binary { op: Add, lhs, rhs };
-    sub(lhs: Expr, rhs: Expr) Binary { op: Sub, lhs, rhs };
-    mul(lhs: Expr, rhs: Expr) Binary { op: Mul, lhs, rhs };
-    eq(lhs: Expr, rhs: Expr) Binary { op: Eq, lhs, rhs };
-    ne(lhs: Expr, rhs: Expr) Binary { op: Ne, lhs, rhs };
-    lt(lhs: Expr, rhs: Expr) Binary { op: Lt, lhs, rhs };
-    le(lhs: Expr, rhs: Expr) Binary { op: Le, lhs, rhs };
-    gt(lhs: Expr, rhs: Expr) Binary { op: Gt, lhs, rhs };
-    ge(lhs: Expr, rhs: Expr) Binary { op: Ge, lhs, rhs };
-    and(lhs: Expr, rhs: Expr) Binary { op: And, lhs, rhs };
-    or(lhs: Expr, rhs: Expr) Binary { op: Or, lhs, rhs };
-    implies(lhs: Expr, rhs: Expr) Binary { op: Implies, lhs, rhs };
+    binary(op: Op, lhs: Term, rhs: Term) Binary { op, lhs, rhs };
+    add(lhs: Term, rhs: Term) Binary { op: Add, lhs, rhs };
+    sub(lhs: Term, rhs: Term) Binary { op: Sub, lhs, rhs };
+    mul(lhs: Term, rhs: Term) Binary { op: Mul, lhs, rhs };
+    eq(lhs: Term, rhs: Term) Binary { op: Eq, lhs, rhs };
+    ne(lhs: Term, rhs: Term) Binary { op: Ne, lhs, rhs };
+    lt(lhs: Term, rhs: Term) Binary { op: Lt, lhs, rhs };
+    le(lhs: Term, rhs: Term) Binary { op: Le, lhs, rhs };
+    gt(lhs: Term, rhs: Term) Binary { op: Gt, lhs, rhs };
+    ge(lhs: Term, rhs: Term) Binary { op: Ge, lhs, rhs };
+    and(lhs: Term, rhs: Term) Binary { op: And, lhs, rhs };
+    or(lhs: Term, rhs: Term) Binary { op: Or, lhs, rhs };
+    implies(lhs: Term, rhs: Term) Binary { op: Implies, lhs, rhs };
 
-    unary(op: Uop, expr: Expr) Unary { op, expr };
-    not(expr: Expr) Unary { op: Not, expr };
-    neg(expr: Expr) Unary { op: Neg, expr };
-}
-
-Stmt {
-    skip() Skip;
-    assign(var: Sym, def: Expr) Assign { var, def };
-    seq(first: Stmt, second: Stmt) Seq { first, second };
-    if_(cond: Expr, then_branch: Stmt, else_branch: Stmt) If {
-        cond,
-        then_branch,
-        else_branch,
-    };
-    assert(expr: Expr) Assert(expr);
+    unary(op: Uop, expr: Term) Unary { op, expr };
+    not(expr: Term) Unary { op: Not, expr };
+    neg(expr: Term) Unary { op: Neg, expr };
 }
 
 Sym {
