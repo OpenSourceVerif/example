@@ -1,4 +1,4 @@
-use crate::{swrite, Context, TermDef, Intern, Op, Sort, SortDef, Term, Uop};
+use crate::{Context, Intern, Op, Sort, SortDef, Term, TermDef, Uop, swrite};
 
 mod string_write {
     #[macro_export]
@@ -67,6 +67,14 @@ pub fn format_expr(sink: &mut String, ctxt: &Context, expr: Term) {
             swrite!(sink, ")");
         }
         TermDef::Unit => swrite!(sink, "()"),
+        TermDef::Tuple(fields) => {
+            swrite!(sink, "(tuple");
+            for field in fields {
+                swrite!(sink, " ");
+                format_expr(sink, ctxt, field);
+            }
+            swrite!(sink, ")");
+        }
     }
 }
 
@@ -117,7 +125,7 @@ pub fn smt(ctxt: &Context, vc: Term) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::{format_expr, Context};
+    use crate::{Context, format_expr};
 
     #[test]
     fn formats_full_width_integer_constants() {

@@ -1,11 +1,10 @@
 use crate::{
-    Context,
-    TermDef::{self, *},
-    Intern, Op,
+    Context, Intern, Op,
     Op::*,
     Sort, SortDef,
     SortDef::*,
     Sym, SymDef, Term,
+    TermDef::{self, *},
     Uop::{self, *},
 };
 
@@ -27,6 +26,8 @@ Term {
     sym(sym: Sym) Sym(sym);
     int_lit(value: i128) Const(value);
     bool_lit(value: bool) TermDef::Bool(value);
+    unit() Unit;
+    tuple(fields: Box<[Term]>) Tuple(fields);
 
     call(func: Sym, arg: Term) Call { func, arg };
 

@@ -28,20 +28,14 @@ impl Callbacks for SymbolicExecutionCallbacks {
                     for (index, path) in result.return_paths.iter().enumerate() {
                         let mut condition = String::new();
                         format_expr(&mut condition, &context, path.fact);
-                        let value =                             |value| {
-                                let mut formatted = String::new();
-                                format_expr(&mut formatted, &context, value);
-                                formatted
-                            },
-                        );
+                        let mut value = String::new();
+                        format_expr(&mut value, &context, path.value);
                         println!("  return path {index}: {condition} => {value}");
                     }
                     for (index, assertion) in result.assertions.iter().enumerate() {
-                        let mut condition = String::new();
-                        let mut required = String::new();
-                        format_expr(&mut condition, &context, assertion.path_condition);
-                        format_expr(&mut required, &context, assertion.condition);
-                        println!("  assertion {index}: {condition} => {required}");
+                        let mut formatted = String::new();
+                        format_expr(&mut formatted, &context, *assertion);
+                        println!("  assertion {index}: {formatted}");
                     }
                 }
                 Err(error) => eprintln!("{name}: skipped: {error}"),

@@ -1,4 +1,4 @@
-use crate::{TermDef, Name, Sort, SortDef, Sym, SymDef, SymDefInterned, Term};
+use crate::{Name, Sort, SortDef, Sym, SymDef, SymDefInterned, Term, TermDef};
 
 mod shorthand;
 
@@ -43,7 +43,7 @@ impl Intern<Term, TermDef> for Context {
     }
 
     fn get(&self, idx: Term) -> TermDef {
-        self.exprs[idx]
+        self.exprs[idx].clone()
     }
 }
 
@@ -84,7 +84,7 @@ impl Intern<Sort, SortDef> for Context {
 #[cfg(test)]
 mod tests {
     use super::{Context, Intern};
-    use crate::{TermDef, Sort, SortDef, Sym, SymDef, Term};
+    use crate::{Sort, SortDef, Sym, SymDef, Term, TermDef};
 
     #[test]
     fn interner_works() {
