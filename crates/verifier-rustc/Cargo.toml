@@ -1,0 +1,12 @@
+[package]
+name = "verifier-rustc"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+smallvec = { workspace = true }
+verifier-core = { workspace = true }
+
+[package.metadata.rust-analyzer]
+rustc_private = true

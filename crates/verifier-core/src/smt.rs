@@ -1,3 +1,5 @@
+//! SMT-LIB rendering for symbolic terms and verification conditions.
+
 use crate::{Context, Intern, Op, Sort, SortDef, Term, TermDef, Uop, swrite};
 
 mod string_write {

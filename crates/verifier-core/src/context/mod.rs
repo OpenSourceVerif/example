@@ -1,6 +1,6 @@
 use crate::{Name, Sort, SortDef, Sym, SymDef, SymDefInterned, Term, TermDef};
 
-mod shorthand;
+mod builders;
 
 use interner::{ArrayInterner, StringInterner};
 

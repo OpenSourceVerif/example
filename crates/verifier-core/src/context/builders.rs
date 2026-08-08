@@ -1,3 +1,5 @@
+//! Convenience builders for interned symbolic values.
+
 use crate::{
     Context, Intern, Op,
     Op::*,

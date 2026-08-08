@@ -1,10 +1,9 @@
 [package]
-name = "interner"
+name = "verifier-core"
 version.workspace = true
 edition.workspace = true
 publish = false
 
 [dependencies]
-bumpalo = { workspace = true }
-hashbrown = { workspace = true }
 index_vec = { workspace = true }
+interner = { workspace = true }

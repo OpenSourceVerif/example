@@ -1,21 +1,21 @@
-[package]
-name = "example"
+[workspace]
+members = [
+    "crates/interner",
+    "crates/verifier-core",
+    "crates/verifier-driver",
+    "crates/verifier-rustc",
+]
+resolver = "3"
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
-
-[dependencies]
-bumpalo = { workspace = true }
-index_vec = { workspace = true }
-interner = { path = "crates/interner" }
-smallvec = "1.15.2"
-
-[package.metadata.rust-analyzer]
-rustc_private = true
-
-[workspace]
-members = ["crates/interner"]
 
 [workspace.dependencies]
 bumpalo = "3.20.3"
 hashbrown = "0.17.1"
 index_vec = "0.1.4"
+smallvec = "1.15.2"
+interner = { path = "crates/interner" }
+verifier-core = { path = "crates/verifier-core" }
+verifier-rustc = { path = "crates/verifier-rustc" }
