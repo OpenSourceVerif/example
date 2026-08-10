@@ -1,5 +1,6 @@
 //! Interned symbolic term, symbol, and sort definitions.
 
+use TermDef::*;
 use index_vec::define_index_type;
 
 define_index_type! { pub struct Term = u32; }
@@ -44,14 +45,14 @@ pub enum TermDef<Fields> {
 impl<Fields> TermDef<Fields> {
     pub(crate) fn map_fields<Mapped>(self, map: impl FnOnce(Fields) -> Mapped) -> TermDef<Mapped> {
         match self {
-            TermDef::Sym(sym) => TermDef::Sym(sym),
-            TermDef::Const(value) => TermDef::Const(value),
-            TermDef::Bool(value) => TermDef::Bool(value),
-            TermDef::Unit => TermDef::Unit,
-            TermDef::Binary { op, lhs, rhs } => TermDef::Binary { op, lhs, rhs },
-            TermDef::Unary { op, expr } => TermDef::Unary { op, expr },
-            TermDef::Call { func, arg } => TermDef::Call { func, arg },
-            TermDef::Tuple(fields) => TermDef::Tuple(map(fields)),
+            TermDef::Sym(sym) => Sym(sym),
+            TermDef::Const(value) => Const(value),
+            TermDef::Bool(value) => Bool(value),
+            TermDef::Unit => Unit,
+            TermDef::Binary { op, lhs, rhs } => Binary { op, lhs, rhs },
+            TermDef::Unary { op, expr } => Unary { op, expr },
+            TermDef::Call { func, arg } => Call { func, arg },
+            TermDef::Tuple(fields) => Tuple(map(fields)),
         }
     }
 }

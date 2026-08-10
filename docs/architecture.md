@@ -29,9 +29,11 @@ association for the duration of one function analysis.
 
 ## `verifier-driver`
 
-`verifier-driver` owns process arguments, rustc callbacks, diagnostics, and
-human-readable output. It does not implement symbolic semantics. Output formats
-and command-line policy belong here rather than in the verification engine.
+`verifier-driver` owns process arguments, rustc callbacks, Z3 execution, and
+diagnostics. It renders each obligation as a complete SMT-LIB script, sends it
+to Z3, and reports failed obligations with their counterexample models. It does
+not implement symbolic semantics. Solver and command-line policy belong here
+rather than in the verification engine.
 
 ## Testing boundaries
 

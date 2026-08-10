@@ -1,7 +1,7 @@
 use std::{path::PathBuf, process::Command};
 
 #[test]
-fn emits_contract_and_loop_invariant_obligations() {
+fn verifies_contract_and_loop_invariant_obligations() {
     let fixture =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/valid_contracts.rs");
     let output = Command::new(env!("CARGO_BIN_EXE_verifier"))
@@ -11,19 +11,26 @@ fn emits_contract_and_loop_invariant_obligations() {
 
     assert!(output.status.success(), "driver failed: {}", String::from_utf8_lossy(&output.stderr));
     let stdout = String::from_utf8(output.stdout).expect("driver output is UTF-8");
-    assert!(stdout.contains("Postcondition"), "missing postcondition VC:\n{stdout}");
-    assert!(
-        stdout.contains("LoopInvariantInitialization"),
-        "missing invariant initialization VC:\n{stdout}"
-    );
-    assert!(
-        stdout.contains("LoopInvariantPreservation"),
-        "missing invariant preservation VC:\n{stdout}"
-    );
-    assert!(
-        !stdout.contains("step exploration limit"),
-        "loop was unfolded instead of cut:\n{stdout}"
-    );
+    assert!(stdout.is_empty(), "unexpected verifier output:\n{stdout}");
+    let stderr = String::from_utf8(output.stderr).expect("driver error output is UTF-8");
+    assert!(stderr.is_empty(), "verification failed:\n{stderr}");
+}
+
+#[test]
+fn reports_a_failed_obligation_with_a_model() {
+    let fixture =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/invalid_contract.rs");
+    let output = Command::new(env!("CARGO_BIN_EXE_verifier"))
+        .arg(fixture)
+        .output()
+        .expect("run verifier driver");
+
+    assert!(!output.status.success(), "driver accepted an invalid contract");
+    let stdout = String::from_utf8(output.stdout).expect("driver output is UTF-8");
+    assert!(stdout.is_empty(), "unexpected verifier output:\n{stdout}");
+    let stderr = String::from_utf8(output.stderr).expect("driver error output is UTF-8");
+    assert!(stderr.contains("Postcondition 0 failed"), "missing failed VC:\n{stderr}");
+    assert!(stderr.contains("define-fun result"), "missing counterexample model:\n{stderr}");
 }
 
 #[test]

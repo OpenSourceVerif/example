@@ -9,6 +9,7 @@ use std::env::args;
 
 mod callbacks;
 mod report;
+mod solver;
 
 use callbacks::VerifierCallbacks;
 

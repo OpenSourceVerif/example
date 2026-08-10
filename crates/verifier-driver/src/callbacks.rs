@@ -15,7 +15,7 @@ impl Callbacks for VerifierCallbacks {
             let name = tcx.def_path_str(owner.to_def_id());
 
             match generate_obligations(tcx, owner, &body) {
-                Ok(verification) => report::success(&name, &verification),
+                Ok(verification) => report::verify(tcx, &name, &verification),
                 Err(error) => report::failure(tcx, &name, &error),
             }
         }

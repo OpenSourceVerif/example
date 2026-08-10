@@ -1,13 +1,22 @@
 use rustc_middle::ty::TyCtxt;
-use verifier_core::format_expr;
+use verifier_core::smt;
 use verifier_rustc::{FunctionVerification, VerificationError};
 
-pub(crate) fn success(name: &str, verification: &FunctionVerification) {
-    println!("{name}:");
+use crate::solver;
+
+pub(crate) fn verify(tcx: TyCtxt<'_>, name: &str, verification: &FunctionVerification) {
     for (index, obligation) in verification.obligations.iter().enumerate() {
-        let mut formatted = String::new();
-        format_expr(&mut formatted, &verification.context, obligation.condition);
-        println!("  {:?} {index}: {formatted}", obligation.kind);
+        let script = smt(&verification.context, obligation.condition);
+        match solver::check(&script) {
+            Ok(None) => {}
+            Ok(Some(model)) => {
+                let model = if model.is_empty() { String::new() } else { format!("\n{model}") };
+                tcx.dcx().err(format!("{name}: {:?} {index} failed\n{script}{model}", obligation.kind));
+            }
+            Err(error) => {
+                tcx.dcx().err(format!("{name}: {:?} {index}: {error}", obligation.kind));
+            }
+        }
     }
 }
 
