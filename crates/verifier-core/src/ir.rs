@@ -29,8 +29,8 @@ pub enum Uop {
     Neg,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum TermDef {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TermDef<Fields> {
     Sym(Sym),
     Const(i128),
     Bool(bool),
@@ -38,7 +38,22 @@ pub enum TermDef {
     Binary { op: Op, lhs: Term, rhs: Term },
     Unary { op: Uop, expr: Term },
     Call { func: Sym, arg: Term },
-    Tuple(Box<[Term]>),
+    Tuple(Fields),
+}
+
+impl<Fields> TermDef<Fields> {
+    pub(crate) fn map_fields<Mapped>(self, map: impl FnOnce(Fields) -> Mapped) -> TermDef<Mapped> {
+        match self {
+            TermDef::Sym(sym) => TermDef::Sym(sym),
+            TermDef::Const(value) => TermDef::Const(value),
+            TermDef::Bool(value) => TermDef::Bool(value),
+            TermDef::Unit => TermDef::Unit,
+            TermDef::Binary { op, lhs, rhs } => TermDef::Binary { op, lhs, rhs },
+            TermDef::Unary { op, expr } => TermDef::Unary { op, expr },
+            TermDef::Call { func, arg } => TermDef::Call { func, arg },
+            TermDef::Tuple(fields) => TermDef::Tuple(map(fields)),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]

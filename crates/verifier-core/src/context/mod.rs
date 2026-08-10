@@ -2,7 +2,7 @@ use crate::{Name, Sort, SortDef, Sym, SymDef, SymDefInterned, Term, TermDef};
 
 mod builders;
 
-use interner::{StringInterner, StructInterner};
+use interner::{List, ListInterner, StringInterner, StructInterner};
 
 pub trait Intern<I, D> {
     type Ref<'a>
@@ -16,8 +16,8 @@ pub trait Intern<I, D> {
 
 #[derive(Default)]
 pub struct Context {
-    terms: StructInterner<Term, TermDef>,
-    // term_lists: interner::ListInterner<Term>,
+    terms: StructInterner<Term, TermDef<List<Term>>>,
+    term_lists: ListInterner<Term>,
     names: StringInterner<Name>,
     syms: StructInterner<Sym, SymDefInterned>,
     sorts: StructInterner<Sort, SortDef>,
@@ -33,18 +33,19 @@ impl Context {
     }
 }
 
-impl Intern<Term, TermDef> for Context {
+impl<'input> Intern<Term, TermDef<&'input [Term]>> for Context {
     type Ref<'a>
-        = TermDef
+        = TermDef<&'a [Term]>
     where
         Self: 'a;
 
-    fn intern(&mut self, expr: TermDef) -> Term {
-        self.terms.intern(expr)
+    fn intern(&mut self, term: TermDef<&'input [Term]>) -> Term {
+        let term = term.map_fields(|f| self.term_lists.intern(f));
+        self.terms.intern(term)
     }
 
-    fn get(&self, idx: Term) -> TermDef {
-        self.terms[idx].clone()
+    fn get(&self, term: Term) -> TermDef<&[Term]> {
+        self.terms[term].map_fields(|f| &self.term_lists[f])
     }
 }
 
@@ -102,6 +103,11 @@ mod tests {
         let x_expr: Term = context.intern(TermDef::Sym(x));
         let same_x_expr: Term = context.intern(TermDef::Sym(x));
         assert_eq!(same_x_expr, x_expr);
+
+        let tuple = context.tuple(&[x_expr, same_x_expr]);
+        let same_tuple = context.tuple(&[same_x_expr, x_expr]);
+        assert_eq!(same_tuple, tuple);
+        assert_eq!(context.get(tuple), TermDef::Tuple(&[x_expr, x_expr][..]));
 
         assert_eq!(context.syms().count(), 1);
     }

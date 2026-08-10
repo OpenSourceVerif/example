@@ -73,7 +73,7 @@ pub fn format_expr(sink: &mut String, ctxt: &Context, expr: Term) {
             swrite!(sink, "(tuple");
             for field in fields {
                 swrite!(sink, " ");
-                format_expr(sink, ctxt, field);
+                format_expr(sink, ctxt, *field);
             }
             swrite!(sink, ")");
         }

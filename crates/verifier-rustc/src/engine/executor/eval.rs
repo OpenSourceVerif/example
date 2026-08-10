@@ -78,7 +78,7 @@ impl<'a, 'tcx, 'mir> Evaluate<&'mir Rvalue<'tcx>> for Executor<'a, 'tcx> {
             Rvalue::UnaryOp(..) => todo!(),
             Rvalue::Aggregate(kind, operands) if matches!(&**kind, AggregateKind::Tuple) => {
                 let values = self.evaluate(state, operands)?;
-                Ok(self.context.tuple(values))
+                Ok(self.context.tuple(&values))
             }
             Rvalue::Cast(..) => todo!(),
             Rvalue::Repeat(..) => todo!(),
@@ -143,7 +143,7 @@ impl<'a, 'tcx, 'mir> Evaluate<(BinOp, &'mir Operand<'tcx>, &'mir Operand<'tcx>)>
             let below_minimum = self.context.lt(value, minimum);
             let above_maximum = self.context.gt(value, maximum);
             let overflowed = self.context.or(below_minimum, above_maximum);
-            return Ok(self.context.tuple(Box::new([value, overflowed])));
+            return Ok(self.context.tuple(&[value, overflowed]));
         }
         Ok(value)
     }
@@ -209,18 +209,14 @@ impl<'a, 'tcx, 'mir, I> Evaluate<&'mir IndexVec<I, Operand<'tcx>>> for Executor<
 where
     I: rustc_index::Idx,
 {
-    type Output = Box<[Term]>;
+    type Output = Vec<Term>;
 
     fn evaluate(
         &mut self,
         state: &State,
         operands: &'mir IndexVec<I, Operand<'tcx>>,
     ) -> Result<Self::Output, ExecutionError> {
-        operands
-            .iter()
-            .map(|operand| self.evaluate(state, operand))
-            .collect::<Result<Vec<_>, _>>()
-            .map(Vec::into)
+        operands.iter().map(|operand| self.evaluate(state, operand)).collect::<Result<Vec<_>, _>>()
     }
 }
 
@@ -274,12 +270,13 @@ fn write_projection(
         return Ok(value);
     };
     match (first, context.get(root)) {
-        (ProjectionElem::Field(field, _), TermDef::Tuple(mut fields)) => {
+        (ProjectionElem::Field(field, _), TermDef::Tuple(fields)) => {
+            let mut fields = fields.to_vec();
             let current = *fields.get(field.as_usize()).ok_or_else(|| {
                 location.error(format!("field {field:?} is outside symbolic tuple"))
             })?;
             fields[field.as_usize()] = write_projection(context, current, rest, value, location)?;
-            Ok(context.tuple(fields))
+            Ok(context.tuple(&fields))
         }
         (other, _) => Err(location.error(format!("place projection `{other:?}`"))),
     }

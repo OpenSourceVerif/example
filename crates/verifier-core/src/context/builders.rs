@@ -29,7 +29,7 @@ Term {
     int_lit(value: i128) Const(value);
     bool_lit(value: bool) TermDef::Bool(value);
     unit() Unit;
-    tuple(fields: Box<[Term]>) Tuple(fields);
+    tuple(fields: &[Term]) Tuple(fields);
 
     call(func: Sym, arg: Term) Call { func, arg };
 

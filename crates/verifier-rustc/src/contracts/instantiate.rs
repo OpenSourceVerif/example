@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use rustc_index::IndexVec;
 use rustc_middle::mir::{Body, Local, Place, VarDebugInfoContents};
+use smallvec::SmallVec;
 use verifier_core::{Context, Intern, Term, TermDef};
 
 pub(crate) fn instantiate(
@@ -11,8 +12,8 @@ pub(crate) fn instantiate(
 ) -> Result<Term, String> {
     match context.get(template) {
         TermDef::Sym(symbol) => {
-            let name = context.get(symbol).name.to_owned();
-            values.get(&name).copied().ok_or_else(|| format!("no value for `{name}`"))
+            let name = context.get(symbol).name;
+            values.get(name).copied().ok_or_else(|| format!("no value for `{name}`"))
         }
         TermDef::Const(_) | TermDef::Bool(_) | TermDef::Unit => Ok(template),
         TermDef::Unary { op, expr } => {
@@ -29,11 +30,14 @@ pub(crate) fn instantiate(
             Ok(context.call(func, arg))
         }
         TermDef::Tuple(fields) => {
-            let fields = fields
-                .iter()
-                .map(|field| instantiate(context, *field, values))
-                .collect::<Result<Vec<_>, _>>()?;
-            Ok(context.tuple(fields.into_boxed_slice()))
+            // copy to 1. workaround borrow checker; 2. scratch to interning a new tuple in context.
+            let mut fields = SmallVec::<[_; 4]>::from_slice(fields);
+
+            for field in &mut fields {
+                *field = instantiate(context, *field, values)?;
+            }
+
+            Ok(context.tuple(&fields))
         }
     }
 }
