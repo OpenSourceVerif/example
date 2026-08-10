@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use hir::Expr;
+use hir::def_id::LocalDefId;
 use rustc_hir::intravisit::Visitor;
 use rustc_hir::{self as hir, intravisit};
 use rustc_middle::{
@@ -14,7 +16,7 @@ use super::{Binding, FunctionSpec, LoopSpec, Source, SpecError, parser::parse_cl
 pub(crate) fn collect_function_spec<'tcx>(
     context: &mut Context,
     tcx: TyCtxt<'tcx>,
-    owner: hir::def_id::LocalDefId,
+    owner: LocalDefId,
     body: &Body<'tcx>,
 ) -> Result<FunctionSpec, SpecError> {
     let bindings = collect_bindings(context, tcx, body);
@@ -97,6 +99,13 @@ fn collect_bindings<'tcx>(
 }
 
 fn sort_for_ty<'tcx>(context: &mut Context, tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> Option<Sort> {
+    if let TyKind::Tuple(fields) = ty.kind() {
+        let mut sorts = Vec::with_capacity(fields.len());
+        for field in fields.iter() {
+            sorts.push(sort_for_ty(context, tcx, field)?);
+        }
+        return Some(context.tuple_sort(&sorts));
+    }
     if ty.is_bool() {
         return Some(context.bool_sort());
     }
@@ -115,8 +124,8 @@ struct LoopCollector<'tcx> {
     loops: Vec<(Span, Vec<(Span, String)>)>,
 }
 
-impl<'tcx> intravisit::Visitor<'tcx> for LoopCollector<'tcx> {
-    fn visit_expr(&mut self, expression: &'tcx hir::Expr<'tcx>) {
+impl<'tcx> Visitor<'tcx> for LoopCollector<'tcx> {
+    fn visit_expr(&mut self, expression: &'tcx Expr<'tcx>) {
         if matches!(expression.kind, hir::ExprKind::Loop(..)) {
             let attributes = self
                 .tcx

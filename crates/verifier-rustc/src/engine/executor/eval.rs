@@ -1,9 +1,10 @@
-use rustc_index::IndexVec;
+use index_vec::IndexVec as FieldVec;
+use rustc_index::{Idx, IndexVec};
 use rustc_middle::{
     mir::{self, AggregateKind, BinOp, Location, Operand, Place, ProjectionElem, Rvalue, UnOp},
     ty::Ty,
 };
-use verifier_core::{Context, DefStore, Op, Term, TermDef, Uop};
+use verifier_core::{Context, DefStore, Field, Op, SortDef, Term, Uop};
 
 use crate::engine::obligation::{ExecutionError, LocationExt};
 
@@ -12,9 +13,19 @@ use super::{
     numeric::{integer_bounds, integer_from_bits},
 };
 
+trait FieldIndexExt {
+    fn to_field(self) -> Field;
+}
+
+impl<I: Idx> FieldIndexExt for I {
+    fn to_field(self) -> Field {
+        Field::from_usize(self.index())
+    }
+}
+
 impl<'a, 'tcx> Executor<'a, 'tcx> {
     fn read_place(
-        &self,
+        &mut self,
         state: &State,
         place: Place<'tcx>,
         location: Location,
@@ -24,14 +35,16 @@ impl<'a, 'tcx> Executor<'a, 'tcx> {
         })?;
 
         for projection in place.projection {
-            match (projection, self.context.get(value)) {
-                (ProjectionElem::Field(field, _), TermDef::Tuple(fields)) => {
-                    value = *fields.get(field.as_usize()).ok_or_else(|| {
-                        location.error(format!("field {field:?} is outside symbolic tuple"))
-                    })?;
-                }
-                (other, _) => return Err(location.error(format!("place projection `{other:?}`"))),
+            let ProjectionElem::Field(field, _) = projection else {
+                return Err(location.error(format!("place projection `{projection:?}`")));
+            };
+            let SortDef::Tuple(fields) = self.context.get(self.context.term_sort(value)) else {
+                return Err(location.error("field projection from non-tuple term"));
+            };
+            if field.as_usize() >= fields.len() {
+                return Err(location.error(format!("field {field:?} is outside symbolic tuple")));
             }
+            value = self.context.proj(value, field.to_field());
         }
         Ok(value)
     }
@@ -68,6 +81,12 @@ impl<'a, 'tcx, 'mir> Evaluate<&'mir Rvalue<'tcx>> for Executor<'a, 'tcx> {
             Rvalue::Use(operand, _) => self.evaluate(state, operand),
             Rvalue::BinaryOp(op, deref!((lhs, rhs))) => self.evaluate(state, (*op, lhs, rhs)),
             Rvalue::UnaryOp(UnOp::Not, operand) => {
+                let ty = operand.ty(self.body, self.tcx);
+                if !ty.is_bool() {
+                    return Err(state
+                        .location
+                        .error(format!("bitwise not on unsupported type `{ty}`")));
+                }
                 let term = self.evaluate(state, operand)?;
                 Ok(self.context.unary(Uop::Not, term))
             }
@@ -269,15 +288,20 @@ fn write_projection(
     let Some((first, rest)) = projection.split_first() else {
         return Ok(value);
     };
-    match (first, context.get(root)) {
-        (ProjectionElem::Field(field, _), TermDef::Tuple(fields)) => {
-            let mut fields = fields.to_vec();
-            let current = *fields.get(field.as_usize()).ok_or_else(|| {
-                location.error(format!("field {field:?} is outside symbolic tuple"))
-            })?;
-            fields[field.as_usize()] = write_projection(context, current, rest, value, location)?;
-            Ok(context.tuple(&fields))
-        }
-        (other, _) => Err(location.error(format!("place projection `{other:?}`"))),
+    let ProjectionElem::Field(field, _) = first else {
+        return Err(location.error(format!("place projection `{first:?}`")));
+    };
+    let SortDef::Tuple(field_sorts) = context.get(context.term_sort(root)) else {
+        return Err(location.error("field projection from non-tuple term"));
+    };
+    let field = field.to_field();
+    if field_sorts.get(field).is_none() {
+        return Err(location.error(format!("field {field:?} is outside symbolic tuple")));
     }
+
+    let mut fields: FieldVec<Field, Term> =
+        field_sorts.indices().map(|field| context.proj(root, field)).collect();
+    let current = fields[field];
+    fields[field] = write_projection(context, current, rest, value, location)?;
+    Ok(context.tuple(fields.as_raw_slice()))
 }

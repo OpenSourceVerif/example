@@ -6,7 +6,13 @@ use super::Executor;
 
 impl<'a, 'tcx> Executor<'a, 'tcx> {
     pub(super) fn sort_for_ty(&mut self, ty: Ty<'tcx>) -> Option<Sort> {
-        if ty.is_bool() {
+        if let TyKind::Tuple(fields) = ty.kind() {
+            let mut sorts = Vec::with_capacity(fields.len());
+            for field in fields.iter() {
+                sorts.push(self.sort_for_ty(field)?);
+            }
+            Some(self.context.tuple_sort(&sorts))
+        } else if ty.is_bool() {
             Some(self.context.bool_sort())
         } else if self
             .integer_layout(ty)

@@ -47,6 +47,10 @@ impl<K: Idx, V, S> StructInterner<K, V, S> {
         self.by_index.iter()
     }
 
+    pub fn iter_enumerated(&self) -> impl Iterator<Item = (K, &V)> {
+        self.by_index.iter_enumerated()
+    }
+
     pub fn len(&self) -> usize {
         self.by_index.len()
     }

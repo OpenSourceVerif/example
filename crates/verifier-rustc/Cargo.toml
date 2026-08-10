@@ -5,6 +5,7 @@ edition.workspace = true
 publish = false
 
 [dependencies]
+index_vec = { workspace = true }
 smallvec = { workspace = true }
 verifier-core = { workspace = true }
 

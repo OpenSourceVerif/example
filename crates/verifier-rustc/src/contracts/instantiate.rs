@@ -1,5 +1,5 @@
 use smallvec::SmallVec;
-use verifier_core::{Context, DefStore, Term, TermDef};
+use verifier_core::{Context, DefStore, Term, TermKind};
 
 use super::{Clause, Source};
 
@@ -17,40 +17,49 @@ fn instantiate_term(
     sources: &[Source],
     value: &mut impl FnMut(Source) -> Option<Term>,
 ) -> Result<Term, String> {
-    match context.get(template) {
-        TermDef::Var(index) => {
+    let def = context.get(template);
+    match def.kind {
+        TermKind::Param(index) => {
             let source = sources
-                .get(index)
+                .get(index as usize)
                 .copied()
                 .ok_or_else(|| format!("term refers to missing variable {index}"))?;
-            value(source).ok_or_else(|| match source {
+            let value = value(source).ok_or_else(|| match source {
                 Source::Local(local) => format!("no value for local {local:?}"),
                 Source::Result => "no value for `result`".to_owned(),
-            })
+            })?;
+            if context.term_sort(value) != def.sort {
+                return Err(format!("value for term parameter {index} has the wrong sort"));
+            }
+            Ok(value)
         }
-        TermDef::Sym(_) | TermDef::Const(_) | TermDef::Bool(_) | TermDef::Unit => Ok(template),
-        TermDef::Unary { op, expr } => {
+        TermKind::Sym(_) | TermKind::Const(_) | TermKind::Bool(_) | TermKind::Unit => Ok(template),
+        TermKind::Unary { op, expr } => {
             let expr = instantiate_term(context, expr, sources, value)?;
             Ok(context.unary(op, expr))
         }
-        TermDef::Binary { op, lhs, rhs } => {
+        TermKind::Binary { op, lhs, rhs } => {
             let lhs = instantiate_term(context, lhs, sources, value)?;
             let rhs = instantiate_term(context, rhs, sources, value)?;
             Ok(context.binary(op, lhs, rhs))
         }
-        TermDef::Call { func, arg } => {
+        TermKind::Call { func, arg } => {
             let arg = instantiate_term(context, arg, sources, value)?;
             Ok(context.call(func, arg))
         }
-        TermDef::Tuple(fields) => {
+        TermKind::Tuple(fields) => {
             // copy to 1. workaround borrow checker; 2. scratch to interning a new tuple in context.
-            let mut fields = SmallVec::<[_; 4]>::from_slice(fields);
+            let mut fields: SmallVec<[_; 4]> = fields.into();
 
             for field in &mut fields {
                 *field = instantiate_term(context, *field, sources, value)?;
             }
 
             Ok(context.tuple(&fields))
+        }
+        TermKind::Proj { tuple, field } => {
+            let tuple = instantiate_term(context, tuple, sources, value)?;
+            Ok(context.proj(tuple, field))
         }
     }
 }
@@ -60,7 +69,7 @@ mod tests {
     use rustc_middle::mir::Local;
     use rustc_span::DUMMY_SP;
     use smallvec::smallvec;
-    use verifier_core::{Context, DefStore, TermDef};
+    use verifier_core::{Context, DefStore, TermKind};
 
     use super::{Clause, Source, instantiate};
 
@@ -70,7 +79,7 @@ mod tests {
         let int = context.int_sort();
         let function_sort = context.arrow(int, int);
         let function = context.symbol("f", function_sort);
-        let variable = context.var(0);
+        let variable = context.param(0, int);
         let call = context.call(function, variable);
         let clause = Clause {
             term: call,
@@ -85,6 +94,6 @@ mod tests {
         })
         .unwrap();
 
-        assert_eq!(context.get(instantiated), TermDef::Call { func: function, arg: value });
+        assert_eq!(context.get(instantiated).kind, TermKind::Call { func: function, arg: value });
     }
 }

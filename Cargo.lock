@@ -21,6 +21,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
 
 [[package]]
+name = "fixedbitset"
+version = "0.5.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d674e81391d1e1ab681a28d99df07927c6d4aa5b027d7da16ba32d1d21ecd99"
+
+[[package]]
 name = "foldhash"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -62,8 +68,10 @@ checksum = "8ed6a63f02c8539c91a8685a86f4099661ba3da017932f6ebbea6de3f0fa7c90"
 name = "verifier-core"
 version = "0.1.0"
 dependencies = [
+ "fixedbitset",
  "index_vec",
  "interner",
+ "smallvec",
 ]
 
 [[package]]
@@ -78,6 +86,7 @@ dependencies = [
 name = "verifier-rustc"
 version = "0.1.0"
 dependencies = [
+ "index_vec",
  "smallvec",
  "verifier-core",
 ]

@@ -3,5 +3,5 @@ pub mod ir;
 pub mod smt;
 
 pub use context::{Context, DefStore, Intern};
-pub use ir::{Name, Op, Sort, SortDef, Sym, SymDef, SymDefStored, Term, TermDef, Uop};
+pub use ir::{Field, Fields, Name, Op, Sort, SortDef, Sym, SymDef, Term, TermDef, TermKind, Uop};
 pub use smt::{format_expr, smt};

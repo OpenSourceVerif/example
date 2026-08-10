@@ -5,5 +5,7 @@ edition.workspace = true
 publish = false
 
 [dependencies]
+fixedbitset = { workspace = true }
 index_vec = { workspace = true }
+smallvec = { workspace = true }
 interner = { workspace = true }

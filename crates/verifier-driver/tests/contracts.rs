@@ -1,5 +1,35 @@
 use std::{path::PathBuf, process::Command};
 
+fn run_fixture(name: &str) -> std::process::Output {
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures").join(name);
+    Command::new(env!("CARGO_BIN_EXE_verifier")).arg(fixture).output().expect("run verifier driver")
+}
+
+#[test]
+fn verifies_tuple_and_unit_contracts() {
+    let output = run_fixture("tuple_contracts.rs");
+
+    assert!(output.status.success(), "driver failed: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.stderr.is_empty(),
+        "unexpected diagnostics: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn does_not_translate_integer_not_as_boolean_not() {
+    let output = run_fixture("unsupported_bitwise_not.rs");
+
+    assert!(output.status.success(), "driver failed: {}", String::from_utf8_lossy(&output.stderr));
+    let stderr = String::from_utf8(output.stderr).expect("driver error output is UTF-8");
+    assert!(
+        stderr.contains("complement: skipped")
+            && stderr.contains("bitwise not on unsupported type `u8`"),
+        "missing unsupported-operation diagnostic:\n{stderr}"
+    );
+}
+
 #[test]
 fn verifies_contract_and_loop_invariant_obligations() {
     let fixture =

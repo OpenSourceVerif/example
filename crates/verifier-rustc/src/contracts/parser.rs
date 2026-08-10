@@ -185,7 +185,11 @@ impl TermParser<'_> {
                         self.sources.push(binding.source);
                         index
                     });
-                Ok((self.context.var(index), binding.sort))
+                let index = u32::try_from(index).map_err(|_| SpecError {
+                    span: self.span,
+                    message: "too many specification variables".to_owned(),
+                })?;
+                Ok((self.context.param(index, binding.sort), binding.sort))
             }
             Token::LParen => {
                 let expression = self.parse_implies()?;
@@ -332,7 +336,7 @@ mod tests {
     use rustc_middle::mir::Local;
     use rustc_span::DUMMY_SP;
     use std::collections::HashMap;
-    use verifier_core::{Context, DefStore, Op, SortDef, TermDef};
+    use verifier_core::{Context, DefStore, Op, SortDef, TermKind};
 
     #[test]
     fn parses_directly_into_terms() {
@@ -352,7 +356,7 @@ mod tests {
         let clause =
             parse_clause(&mut context, &bindings, "x >= 0 ==> result >= x", DUMMY_SP).unwrap();
 
-        assert!(matches!(context.get(clause.term), TermDef::Binary { op: Op::Implies, .. }));
+        assert!(matches!(context.get(clause.term).kind, TermKind::Binary { op: Op::Implies, .. }));
         assert_eq!(
             clause.sources.as_slice(),
             &[Source::Local(Local::from_usize(1)), Source::Result]

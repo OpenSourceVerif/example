@@ -209,8 +209,8 @@ mod tests {
         let vc = context.implies(path, assertion);
 
         assert_eq!(
-            context.get(vc),
-            verifier_core::TermDef::Binary {
+            context.get(vc).kind,
+            verifier_core::TermKind::Binary {
                 op: verifier_core::Op::Implies,
                 lhs: path,
                 rhs: assertion,
