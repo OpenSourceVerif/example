@@ -2,7 +2,7 @@
 
 less boilerplate, no unnecessary ceremony.
 pick one terminology for one thing. eliminate interchangeble terms, prefer no adjective.
-use typses in more structured ways, create less nominal type.
+use types in more structured ways, create less nominal type.
 more `use`. resolve collision via alias.
 - exception: `match` block uses `Enum::Variant`. `Variant => {}` has no syntatic indication： is `Variant` variant or variable binding?
 use more traits for 
