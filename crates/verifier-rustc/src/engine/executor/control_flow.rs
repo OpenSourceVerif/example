@@ -5,7 +5,7 @@ use smallvec::SmallVec;
 use verifier_core::Term;
 
 use crate::{
-    contracts::{Clause, instantiate, local_bindings},
+    contracts::{Clause, Source, instantiate},
     engine::{
         loop_analysis::LoopInfo,
         obligation::{ExecutionError, LocationExt, Obligation, ObligationKind},
@@ -17,24 +17,27 @@ use super::{Evaluate, Execute, Executor, State, conjoin, entry_loc};
 impl<'a, 'tcx> Executor<'a, 'tcx> {
     fn instantiate_in_state(
         &mut self,
-        clause: Clause,
+        clause: &Clause,
         state: &State,
     ) -> Result<Term, ExecutionError> {
-        let values = local_bindings(self.body, &state.store);
-        instantiate(self.context, clause.term, &values)
-            .map_err(|message| state.location.error(format!("invalid loop invariant: {message}")))
+        instantiate(self.context, clause, |source| match source {
+            Source::Local(local) => state.store[local],
+            Source::Result => None,
+        })
+        .map_err(|message| state.location.error(format!("invalid loop invariant: {message}")))
     }
 
     fn instantiate_postcondition(
         &mut self,
-        clause: Clause,
+        clause: &Clause,
         value: Term,
         location: Location,
     ) -> Result<Term, ExecutionError> {
-        let mut values = self.entry_bindings.clone();
-        values.insert("result".to_owned(), value);
-        instantiate(self.context, clause.term, &values)
-            .map_err(|message| location.error(format!("invalid postcondition: {message}")))
+        instantiate(self.context, clause, |source| match source {
+            Source::Local(local) => self.entry[local],
+            Source::Result => Some(value),
+        })
+        .map_err(|message| location.error(format!("invalid postcondition: {message}")))
     }
 
     fn transition(
@@ -75,7 +78,7 @@ impl<'a, 'tcx> Executor<'a, 'tcx> {
 
         let premise = conjoin(self.context, &state.facts);
         for clause in &info.invariants {
-            let invariant = self.instantiate_in_state(*clause, &state)?;
+            let invariant = self.instantiate_in_state(clause, &state)?;
             let condition = self.context.implies(premise, invariant);
             self.obligations.push(Obligation {
                 kind: ObligationKind::LoopInvariantInitialization,
@@ -105,7 +108,7 @@ impl<'a, 'tcx> Executor<'a, 'tcx> {
         }
 
         for clause in &info.invariants {
-            let invariant = self.instantiate_in_state(*clause, &state)?;
+            let invariant = self.instantiate_in_state(clause, &state)?;
             state.facts.push(invariant);
         }
         state.location = entry_loc(info.header);
@@ -122,7 +125,7 @@ impl<'a, 'tcx> Executor<'a, 'tcx> {
         }
         let premise = conjoin(self.context, &state.facts);
         for clause in &info.invariants {
-            let invariant = self.instantiate_in_state(*clause, &state)?;
+            let invariant = self.instantiate_in_state(clause, &state)?;
             let condition = self.context.implies(premise, invariant);
             self.obligations.push(Obligation {
                 kind: ObligationKind::LoopInvariantPreservation,
@@ -233,7 +236,7 @@ impl<'a, 'tcx, 'mir> Execute<&'mir TerminatorKind<'tcx>> for Executor<'a, 'tcx> 
                     .ok_or_else(|| state.location.error("return place is uninitialized"))?;
                 for clause in &self.spec.ensures {
                     let postcondition =
-                        self.instantiate_postcondition(*clause, value, state.location)?;
+                        self.instantiate_postcondition(clause, value, state.location)?;
                     let condition = self.context.implies(fact, postcondition);
                     self.obligations.push(Obligation {
                         kind: ObligationKind::Postcondition,

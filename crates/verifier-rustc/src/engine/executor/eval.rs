@@ -3,7 +3,7 @@ use rustc_middle::{
     mir::{self, AggregateKind, BinOp, Location, Operand, Place, ProjectionElem, Rvalue, UnOp},
     ty::Ty,
 };
-use verifier_core::{Context, Intern, Op, Term, TermDef, Uop};
+use verifier_core::{Context, DefStore, Op, Term, TermDef, Uop};
 
 use crate::engine::obligation::{ExecutionError, LocationExt};
 

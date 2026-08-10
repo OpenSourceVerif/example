@@ -1,12 +1,21 @@
 use std::fmt::{Display, Formatter, Result as FormatResult};
 
+use rustc_middle::mir::Local;
 use rustc_span::Span;
+use smallvec::SmallVec;
 use verifier_core::Term;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Source {
+    Local(Local),
+    Result,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Clause {
     pub term: Term,
     pub span: Span,
+    pub(crate) sources: SmallVec<[Source; 4]>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

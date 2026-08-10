@@ -1,32 +1,45 @@
-use std::collections::HashMap;
-
-use rustc_index::IndexVec;
-use rustc_middle::mir::{Body, Local, Place, VarDebugInfoContents};
 use smallvec::SmallVec;
-use verifier_core::{Context, Intern, Term, TermDef};
+use verifier_core::{Context, DefStore, Term, TermDef};
+
+use super::{Clause, Source};
 
 pub(crate) fn instantiate(
     context: &mut Context,
+    clause: &Clause,
+    mut value: impl FnMut(Source) -> Option<Term>,
+) -> Result<Term, String> {
+    instantiate_term(context, clause.term, &clause.sources, &mut value)
+}
+
+fn instantiate_term(
+    context: &mut Context,
     template: Term,
-    values: &HashMap<String, Term>,
+    sources: &[Source],
+    value: &mut impl FnMut(Source) -> Option<Term>,
 ) -> Result<Term, String> {
     match context.get(template) {
-        TermDef::Sym(symbol) => {
-            let name = context.get(symbol).name;
-            values.get(name).copied().ok_or_else(|| format!("no value for `{name}`"))
+        TermDef::Var(index) => {
+            let source = sources
+                .get(index)
+                .copied()
+                .ok_or_else(|| format!("term refers to missing variable {index}"))?;
+            value(source).ok_or_else(|| match source {
+                Source::Local(local) => format!("no value for local {local:?}"),
+                Source::Result => "no value for `result`".to_owned(),
+            })
         }
-        TermDef::Const(_) | TermDef::Bool(_) | TermDef::Unit => Ok(template),
+        TermDef::Sym(_) | TermDef::Const(_) | TermDef::Bool(_) | TermDef::Unit => Ok(template),
         TermDef::Unary { op, expr } => {
-            let expr = instantiate(context, expr, values)?;
+            let expr = instantiate_term(context, expr, sources, value)?;
             Ok(context.unary(op, expr))
         }
         TermDef::Binary { op, lhs, rhs } => {
-            let lhs = instantiate(context, lhs, values)?;
-            let rhs = instantiate(context, rhs, values)?;
+            let lhs = instantiate_term(context, lhs, sources, value)?;
+            let rhs = instantiate_term(context, rhs, sources, value)?;
             Ok(context.binary(op, lhs, rhs))
         }
         TermDef::Call { func, arg } => {
-            let arg = instantiate(context, arg, values)?;
+            let arg = instantiate_term(context, arg, sources, value)?;
             Ok(context.call(func, arg))
         }
         TermDef::Tuple(fields) => {
@@ -34,7 +47,7 @@ pub(crate) fn instantiate(
             let mut fields = SmallVec::<[_; 4]>::from_slice(fields);
 
             for field in &mut fields {
-                *field = instantiate(context, *field, values)?;
+                *field = instantiate_term(context, *field, sources, value)?;
             }
 
             Ok(context.tuple(&fields))
@@ -42,18 +55,36 @@ pub(crate) fn instantiate(
     }
 }
 
-pub(crate) fn local_bindings(
-    body: &Body<'_>,
-    store: &IndexVec<Local, Option<Term>>,
-) -> HashMap<String, Term> {
-    let mut values = HashMap::new();
-    for info in &body.var_debug_info {
-        let VarDebugInfoContents::Place(Place { local, projection }) = info.value else { continue };
-        if projection.is_empty()
-            && let Some(value) = store[local]
-        {
-            values.insert(info.name.as_str().to_owned(), value);
-        }
+#[cfg(test)]
+mod tests {
+    use rustc_middle::mir::Local;
+    use rustc_span::DUMMY_SP;
+    use smallvec::smallvec;
+    use verifier_core::{Context, DefStore, TermDef};
+
+    use super::{Clause, Source, instantiate};
+
+    #[test]
+    fn substitutes_variables_and_preserves_callee() {
+        let mut context = Context::default();
+        let int = context.int_sort();
+        let function_sort = context.arrow(int, int);
+        let function = context.symbol("f", function_sort);
+        let variable = context.var(0);
+        let call = context.call(function, variable);
+        let clause = Clause {
+            term: call,
+            span: DUMMY_SP,
+            sources: smallvec![Source::Local(Local::from_usize(1))],
+        };
+        let value = context.int_lit(42);
+
+        let instantiated = instantiate(&mut context, &clause, |source| match source {
+            Source::Local(_) => Some(value),
+            Source::Result => None,
+        })
+        .unwrap();
+
+        assert_eq!(context.get(instantiated), TermDef::Call { func: function, arg: value });
     }
-    values
 }

@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use rustc_index::IndexVec;
 use rustc_middle::{
     mir::{BasicBlock, Body, Local, Location, START_BLOCK, VarDebugInfoContents},
@@ -8,7 +6,7 @@ use rustc_middle::{
 use smallvec::SmallVec;
 use verifier_core::{Context, Term};
 
-use crate::contracts::{FunctionSpec, instantiate};
+use crate::contracts::{FunctionSpec, Source, instantiate};
 
 use super::{
     loop_analysis::LoopAnalysis,
@@ -56,7 +54,7 @@ struct Executor<'a, 'tcx> {
     limits: Limits,
     spec: &'a FunctionSpec,
     loops: LoopAnalysis,
-    entry_bindings: HashMap<String, Term>,
+    entry: IndexVec<Local, Option<Term>>,
     fresh_counter: u32,
     obligations: Vec<Obligation>,
 }
@@ -80,7 +78,7 @@ pub(crate) fn execute_with_spec<'tcx>(
         limits,
         spec,
         loops,
-        entry_bindings: HashMap::new(),
+        entry: body.local_decls.iter().map(|_| None).collect(),
         fresh_counter: 0,
         obligations: Vec::new(),
     }
@@ -158,14 +156,17 @@ impl<'a, 'tcx> Executor<'a, 'tcx> {
             let name = self.argument_name(local, index);
             let symbol = self.context.symbol(&name, sort);
             let term = self.context.sym(symbol);
-            self.entry_bindings.insert(name, term);
+            self.entry[local] = Some(term);
             store[local] = Some(term);
             self.add_integer_range_facts(ty, term, &mut facts);
         }
 
         for clause in &self.spec.requires {
-            let term = instantiate(self.context, clause.term, &self.entry_bindings)
-                .map_err(|message| location.error(format!("invalid precondition: {message}")))?;
+            let term = instantiate(self.context, clause, |source| match source {
+                Source::Local(local) => store[local],
+                Source::Result => None,
+            })
+            .map_err(|message| location.error(format!("invalid precondition: {message}")))?;
             facts.push(term);
         }
 
@@ -195,7 +196,7 @@ impl<'a, 'tcx> Executor<'a, 'tcx> {
 
 #[cfg(test)]
 mod tests {
-    use verifier_core::{Context, Intern};
+    use verifier_core::{Context, DefStore};
 
     #[test]
     fn assertion_vc_is_guarded_by_its_path_condition() {

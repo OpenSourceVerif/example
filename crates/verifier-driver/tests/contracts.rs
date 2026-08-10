@@ -30,7 +30,7 @@ fn reports_a_failed_obligation_with_a_model() {
     assert!(stdout.is_empty(), "unexpected verifier output:\n{stdout}");
     let stderr = String::from_utf8(output.stderr).expect("driver error output is UTF-8");
     assert!(stderr.contains("Postcondition 0 failed"), "missing failed VC:\n{stderr}");
-    assert!(stderr.contains("define-fun result"), "missing counterexample model:\n{stderr}");
+    assert!(stderr.contains("define-fun input!0"), "missing counterexample model:\n{stderr}");
 }
 
 #[test]

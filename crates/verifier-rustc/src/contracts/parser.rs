@@ -1,9 +1,10 @@
 use rustc_span::Span;
+use smallvec::SmallVec;
 use std::collections::HashMap;
 
-use verifier_core::{Context, Intern, Op, Sort, SortDef, Term};
+use verifier_core::{Context, DefStore, Op, Sort, SortDef, Term};
 
-use super::{Binding, Clause, SpecError};
+use super::{Binding, Clause, Source, SpecError};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Token {
@@ -35,10 +36,11 @@ struct TermParser<'a> {
     tokens: Vec<Token>,
     position: usize,
     span: Span,
+    sources: SmallVec<[Source; 4]>,
 }
 
 impl TermParser<'_> {
-    fn parse(mut self) -> Result<Term, SpecError> {
+    fn parse(mut self) -> Result<Clause, SpecError> {
         let (term, sort) = self.parse_implies()?;
         if self.peek() != &Token::End {
             return self.error("unexpected token after specification expression");
@@ -46,7 +48,7 @@ impl TermParser<'_> {
         if self.context.get(sort) != SortDef::Bool {
             return self.error("specification clause must have boolean type");
         }
-        Ok(term)
+        Ok(Clause { term, span: self.span, sources: self.sources })
     }
 
     fn parse_implies(&mut self) -> Result<(Term, Sort), SpecError> {
@@ -174,8 +176,16 @@ impl TermParser<'_> {
                         "specification variable `{name}` is shadowed or ambiguous"
                     ));
                 }
-                let symbol = self.context.symbol(&name, binding.sort);
-                Ok((self.context.sym(symbol), binding.sort))
+                let index = self
+                    .sources
+                    .iter()
+                    .position(|source| *source == binding.source)
+                    .unwrap_or_else(|| {
+                        let index = self.sources.len();
+                        self.sources.push(binding.source);
+                        index
+                    });
+                Ok((self.context.var(index), binding.sort))
             }
             Token::LParen => {
                 let expression = self.parse_implies()?;
@@ -235,8 +245,7 @@ pub(super) fn parse_clause(
     span: Span,
 ) -> Result<Clause, SpecError> {
     let tokens = lex(expression, span)?;
-    let term = TermParser { context, bindings, tokens, position: 0, span }.parse()?;
-    Ok(Clause { term, span })
+    TermParser { context, bindings, tokens, position: 0, span, sources: SmallVec::new() }.parse()
 }
 
 fn lex(input: &str, span: Span) -> Result<Vec<Token>, SpecError> {
@@ -318,32 +327,55 @@ fn lex(input: &str, span: Span) -> Result<Vec<Token>, SpecError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{TermParser, lex};
-    use crate::contracts::Binding;
+    use super::parse_clause;
+    use crate::contracts::{Binding, Source};
+    use rustc_middle::mir::Local;
     use rustc_span::DUMMY_SP;
     use std::collections::HashMap;
-    use verifier_core::{Context, Intern, Op, SortDef, TermDef};
+    use verifier_core::{Context, DefStore, Op, SortDef, TermDef};
 
     #[test]
     fn parses_directly_into_terms() {
         let mut context = Context::default();
         let int = context.int_sort();
         let bindings = HashMap::from([
-            ("x".to_owned(), Binding { sort: int, local: None, ambiguous: false }),
-            ("result".to_owned(), Binding { sort: int, local: None, ambiguous: false }),
+            (
+                "x".to_owned(),
+                Binding {
+                    sort: int,
+                    source: Source::Local(Local::from_usize(1)),
+                    ambiguous: false,
+                },
+            ),
+            ("result".to_owned(), Binding { sort: int, source: Source::Result, ambiguous: false }),
         ]);
-        let tokens = lex("x >= 0 ==> result >= x", DUMMY_SP).unwrap();
-        let term = TermParser {
-            context: &mut context,
-            bindings: &bindings,
-            tokens,
-            position: 0,
-            span: DUMMY_SP,
-        }
-        .parse()
-        .unwrap();
+        let clause =
+            parse_clause(&mut context, &bindings, "x >= 0 ==> result >= x", DUMMY_SP).unwrap();
 
-        assert!(matches!(context.get(term), TermDef::Binary { op: Op::Implies, .. }));
+        assert!(matches!(context.get(clause.term), TermDef::Binary { op: Op::Implies, .. }));
+        assert_eq!(
+            clause.sources.as_slice(),
+            &[Source::Local(Local::from_usize(1)), Source::Result]
+        );
         assert_eq!(context.get(int), SortDef::Int);
+    }
+
+    #[test]
+    fn renamed_variables_reuse_terms() {
+        let mut context = Context::default();
+        let int = context.int_sort();
+        let binding = |local| Binding {
+            sort: int,
+            source: Source::Local(Local::from_usize(local)),
+            ambiguous: false,
+        };
+        let x = HashMap::from([("x".to_owned(), binding(1))]);
+        let value = HashMap::from([("value".to_owned(), binding(2))]);
+
+        let x = parse_clause(&mut context, &x, "x >= 0", DUMMY_SP).unwrap();
+        let value = parse_clause(&mut context, &value, "value >= 0", DUMMY_SP).unwrap();
+
+        assert_eq!(value.term, x.term);
+        assert_ne!(value.sources, x.sources);
     }
 }

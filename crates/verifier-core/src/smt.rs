@@ -1,6 +1,6 @@
 //! SMT-LIB rendering for symbolic terms and verification conditions.
 
-use crate::{Context, Intern, Op, Sort, SortDef, Term, TermDef, Uop, swrite};
+use crate::{Context, DefStore, Op, Sort, SortDef, Term, TermDef, Uop, swrite};
 
 mod string_write {
     #[macro_export]
@@ -48,11 +48,14 @@ impl Uop {
 
 pub fn format_expr(sink: &mut String, ctxt: &Context, expr: Term) {
     match ctxt.get(expr) {
-        TermDef::Sym(var) => swrite!(sink, "{}", ctxt.get(var).name),
+        TermDef::Var(index) => panic!("open term variable {index} reached SMT emission"),
+        TermDef::Sym(sym) => format_sym(sink, ctxt, sym),
         TermDef::Const(value) => swrite!(sink, "{}", value),
         TermDef::Bool(value) => swrite!(sink, "{}", value),
         TermDef::Call { func, arg } => {
-            swrite!(sink, "({} ", &ctxt.get(func).name,);
+            swrite!(sink, "(");
+            format_sym(sink, ctxt, func);
+            swrite!(sink, " ");
             format_expr(sink, ctxt, arg);
             swrite!(sink, ")");
         }
@@ -78,6 +81,10 @@ pub fn format_expr(sink: &mut String, ctxt: &Context, expr: Term) {
             swrite!(sink, ")");
         }
     }
+}
+
+fn format_sym(sink: &mut String, ctxt: &Context, sym: crate::Sym) {
+    swrite!(sink, "{}!{}", ctxt.get(sym).name, sym.index());
 }
 
 pub fn format_sort(sink: &mut String, ctxt: &Context, sort: Sort) {
@@ -108,9 +115,11 @@ pub fn smt(ctxt: &Context, vc: Term) -> String {
     // Symbolic MIR can contain multiplication of two symbolic integers.
     swrite!(sink, "(set-logic ALL)\n\n");
 
-    for sym in ctxt.syms() {
-        swrite!(sink, "(declare-{} {} ", sort_type(ctxt, sym.sort), sym.name);
-        format_sort(sink, ctxt, sym.sort);
+    for (sym, def) in ctxt.syms() {
+        swrite!(sink, "(declare-{} ", sort_type(ctxt, def.sort));
+        format_sym(sink, ctxt, sym);
+        swrite!(sink, " ");
+        format_sort(sink, ctxt, def.sort);
         swrite!(sink, ")\n");
     }
 
@@ -127,7 +136,7 @@ pub fn smt(ctxt: &Context, vc: Term) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::{Context, format_expr};
+    use crate::{Context, format_expr, smt};
 
     #[test]
     fn formats_full_width_integer_constants() {
@@ -138,5 +147,22 @@ mod tests {
         format_expr(&mut formatted, &context, value);
 
         assert_eq!(formatted, i128::MIN.to_string());
+    }
+
+    #[test]
+    fn distinguishes_symbols_with_the_same_name() {
+        let mut context = Context::default();
+        let int = context.int_sort();
+        let first = context.symbol("x", int);
+        let second = context.symbol("x", int);
+        let first = context.sym(first);
+        let second = context.sym(second);
+        let equality = context.eq(first, second);
+
+        let output = smt(&context, equality);
+
+        assert!(output.contains("(declare-const x!0 Int)"));
+        assert!(output.contains("(declare-const x!1 Int)"));
+        assert!(output.contains("(= x!0 x!1)"));
     }
 }

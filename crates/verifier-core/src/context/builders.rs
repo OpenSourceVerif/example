@@ -5,7 +5,7 @@ use crate::{
     Op::*,
     Sort, SortDef,
     SortDef::*,
-    Sym, SymDef, Term,
+    Sym, Term,
     TermDef::{self, *},
     Uop::{self, *},
 };
@@ -25,12 +25,12 @@ macro_rules! define_builders {
 define_builders! {
 
 Term {
+    var(index: usize) Var(index);
     sym(sym: Sym) Sym(sym);
     int_lit(value: i128) Const(value);
     bool_lit(value: bool) TermDef::Bool(value);
     unit() Unit;
     tuple(fields: &[Term]) Tuple(fields);
-
     call(func: Sym, arg: Term) Call { func, arg };
 
     binary(op: Op, lhs: Term, rhs: Term) Binary { op, lhs, rhs };
@@ -50,10 +50,6 @@ Term {
     unary(op: Uop, expr: Term) Unary { op, expr };
     not(expr: Term) Unary { op: Not, expr };
     neg(expr: Term) Unary { op: Neg, expr };
-}
-
-Sym {
-    symbol(name: &str, sort: Sort) SymDef { name, sort };
 }
 
 Sort {

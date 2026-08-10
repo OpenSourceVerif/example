@@ -11,7 +11,8 @@ pub(crate) fn verify(tcx: TyCtxt<'_>, name: &str, verification: &FunctionVerific
             Ok(None) => {}
             Ok(Some(model)) => {
                 let model = if model.is_empty() { String::new() } else { format!("\n{model}") };
-                tcx.dcx().err(format!("{name}: {:?} {index} failed\n{script}{model}", obligation.kind));
+                tcx.dcx()
+                    .err(format!("{name}: {:?} {index} failed\n{script}{model}", obligation.kind));
             }
             Err(error) => {
                 tcx.dcx().err(format!("{name}: {:?} {index}: {error}", obligation.kind));

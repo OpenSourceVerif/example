@@ -32,6 +32,7 @@ pub enum Uop {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TermDef<Fields> {
+    Var(usize),
     Sym(Sym),
     Const(i128),
     Bool(bool),
@@ -45,6 +46,7 @@ pub enum TermDef<Fields> {
 impl<Fields> TermDef<Fields> {
     pub(crate) fn map_fields<Mapped>(self, map: impl FnOnce(Fields) -> Mapped) -> TermDef<Mapped> {
         match self {
+            TermDef::Var(index) => Var(index),
             TermDef::Sym(sym) => Sym(sym),
             TermDef::Const(value) => Const(value),
             TermDef::Bool(value) => Bool(value),
@@ -64,7 +66,7 @@ pub struct SymDef<'c> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct SymDefInterned {
+pub struct SymDefStored {
     pub name: Name,
     pub sort: Sort,
 }

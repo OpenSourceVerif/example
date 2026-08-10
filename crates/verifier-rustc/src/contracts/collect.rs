@@ -9,7 +9,7 @@ use rustc_middle::{
 use rustc_span::Span;
 use verifier_core::{Context, Sort};
 
-use super::{Binding, FunctionSpec, LoopSpec, SpecError, parser::parse_clause};
+use super::{Binding, FunctionSpec, LoopSpec, Source, SpecError, parser::parse_clause};
 
 pub(crate) fn collect_function_spec<'tcx>(
     context: &mut Context,
@@ -76,9 +76,9 @@ fn collect_bindings<'tcx>(
             continue;
         };
         let name = info.name.as_str().to_owned();
-        let binding = Binding { sort, local: Some(place.local), ambiguous: false };
+        let binding = Binding { sort, source: Source::Local(place.local), ambiguous: false };
         if let Some(previous) = bindings.get_mut(&name) {
-            if previous.local != binding.local || previous.sort != binding.sort {
+            if previous.source != binding.source || previous.sort != binding.sort {
                 previous.ambiguous = true;
             }
         } else {
@@ -88,7 +88,10 @@ fn collect_bindings<'tcx>(
 
     let return_ty = body.local_decls[RETURN_PLACE].ty;
     if let Some(sort) = sort_for_ty(context, tcx, return_ty) {
-        bindings.insert("result".to_owned(), Binding { sort, local: None, ambiguous: false });
+        bindings.insert(
+            "result".to_owned(),
+            Binding { sort, source: Source::Result, ambiguous: false },
+        );
     }
     bindings
 }

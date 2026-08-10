@@ -1,8 +1,9 @@
 #![feature(register_tool)]
 #![register_tool(verifier)]
 
-#[verifier::ensures(result > 0)]
-pub fn zero() -> i32 {
+#[verifier::ensures(result > input)]
+pub fn zero(input: i32) -> i32 {
+    let _ = input;
     0
 }
 
