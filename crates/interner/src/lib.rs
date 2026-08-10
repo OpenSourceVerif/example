@@ -1,5 +1,7 @@
-mod array_interner;
+mod list_interner;
 mod string_interner;
+mod struct_interner;
 
-pub use array_interner::ArrayInterner;
+pub use list_interner::{List, ListInterner};
 pub use string_interner::StringInterner;
+pub use struct_interner::StructInterner;

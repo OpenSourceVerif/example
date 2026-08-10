@@ -2,7 +2,7 @@ use crate::{Name, Sort, SortDef, Sym, SymDef, SymDefInterned, Term, TermDef};
 
 mod builders;
 
-use interner::{ArrayInterner, StringInterner};
+use interner::{StringInterner, StructInterner};
 
 pub trait Intern<I, D> {
     type Ref<'a>
@@ -16,16 +16,17 @@ pub trait Intern<I, D> {
 
 #[derive(Default)]
 pub struct Context {
-    exprs: ArrayInterner<Term, TermDef>,
-    sym_names: StringInterner<Name>,
-    syms: ArrayInterner<Sym, SymDefInterned>,
-    sorts: ArrayInterner<Sort, SortDef>,
+    terms: StructInterner<Term, TermDef>,
+    // term_lists: interner::ListInterner<Term>,
+    names: StringInterner<Name>,
+    syms: StructInterner<Sym, SymDefInterned>,
+    sorts: StructInterner<Sort, SortDef>,
 }
 
 impl Context {
     pub fn syms<'a>(&'a self) -> impl Iterator<Item = SymDef<'a>> {
         self.syms.iter().map(|SymDefInterned { name, sort }| {
-            let name = &self.sym_names[*name];
+            let name = &self.names[*name];
 
             SymDef { name, sort: *sort }
         })
@@ -39,11 +40,11 @@ impl Intern<Term, TermDef> for Context {
         Self: 'a;
 
     fn intern(&mut self, expr: TermDef) -> Term {
-        self.exprs.intern(expr)
+        self.terms.intern(expr)
     }
 
     fn get(&self, idx: Term) -> TermDef {
-        self.exprs[idx].clone()
+        self.terms[idx].clone()
     }
 }
 
@@ -54,13 +55,13 @@ impl<'input> Intern<Sym, SymDef<'input>> for Context {
         Self: 'a;
 
     fn intern(&mut self, sym: SymDef<'input>) -> Sym {
-        let name = self.sym_names.intern(sym.name);
+        let name = self.names.intern(sym.name);
         self.syms.intern(SymDefInterned { name, sort: sym.sort })
     }
 
     fn get<'a>(&'a self, idx: Sym) -> SymDef<'a> {
         let SymDefInterned { name, sort } = self.syms[idx];
-        let name = &self.sym_names[name];
+        let name = &self.names[name];
 
         SymDef { name, sort }
     }
@@ -87,7 +88,7 @@ mod tests {
     use crate::{Sort, SortDef, Sym, SymDef, Term, TermDef};
 
     #[test]
-    fn interner_works() {
+    fn handle_preserves_definition_equality() {
         let mut context = Context::default();
 
         let int: Sort = context.intern(SortDef::Int);

@@ -1,4 +1,4 @@
-//! Convenience builders for interned symbolic values.
+//! Shorthand for intern method.
 
 use crate::{
     Context, Intern, Op,
@@ -10,19 +10,19 @@ use crate::{
     Uop::{self, *},
 };
 
-macro_rules! define_constructors {
-    ($($output:ident {
-        $($method:ident ($($arg:ident : $arg_ty:ty),* $(,)?) $definition:expr;)*
+macro_rules! define_builders {
+    ($($return:ident {
+        $($method:ident ($($argument:ident : $type:ty),* $(,)?) $definition:expr;)*
     })*) => {$(
         impl Context {
-            $(pub fn $method(&mut self, $($arg: $arg_ty),*) -> $output {
+            $(pub fn $method(&mut self, $($argument: $type),*) -> $return {
                 self.intern($definition)
             })*
         }
     )*};
 }
 
-define_constructors! {
+define_builders! {
 
 Term {
     sym(sym: Sym) Sym(sym);

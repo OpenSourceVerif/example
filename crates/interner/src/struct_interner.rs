@@ -1,5 +1,5 @@
 use hashbrown::{DefaultHashBuilder, HashTable, hash_table::Entry};
-use index_vec::{Idx, IndexVec};
+use index_vec::{Idx, IndexVec as Vec};
 
 use std::{
     hash::{BuildHasher, Hash},
@@ -10,13 +10,13 @@ use std::{
 ///
 /// Each value is owned exactly once, by `by_index`. The hash table stores only
 /// indices and hashes/compares them by resolving them through `by_index`.
-pub struct ArrayInterner<K: Idx, V, S = DefaultHashBuilder> {
+pub struct StructInterner<K: Idx, V, S = DefaultHashBuilder> {
     by_value: HashTable<K>,
-    by_index: IndexVec<K, V>,
+    by_index: Vec<K, V>,
     hash_builder: S,
 }
 
-impl<K: Idx, V> ArrayInterner<K, V, DefaultHashBuilder> {
+impl<K: Idx, V> StructInterner<K, V, DefaultHashBuilder> {
     pub fn new() -> Self {
         Self::with_hasher(DefaultHashBuilder::default())
     }
@@ -26,15 +26,15 @@ impl<K: Idx, V> ArrayInterner<K, V, DefaultHashBuilder> {
     }
 }
 
-impl<K: Idx, V, S> ArrayInterner<K, V, S> {
+impl<K: Idx, V, S> StructInterner<K, V, S> {
     pub fn with_hasher(hash_builder: S) -> Self {
-        Self { by_value: HashTable::new(), by_index: IndexVec::new(), hash_builder }
+        Self { by_value: HashTable::new(), by_index: Vec::new(), hash_builder }
     }
 
     pub fn with_capacity_and_hasher(capacity: usize, hash_builder: S) -> Self {
         Self {
             by_value: HashTable::with_capacity(capacity),
-            by_index: IndexVec::with_capacity(capacity),
+            by_index: Vec::with_capacity(capacity),
             hash_builder,
         }
     }
@@ -56,7 +56,7 @@ impl<K: Idx, V, S> ArrayInterner<K, V, S> {
     }
 }
 
-impl<K, V, S> ArrayInterner<K, V, S>
+impl<K, V, S> StructInterner<K, V, S>
 where
     K: Idx,
     V: Eq + Hash,
@@ -87,13 +87,13 @@ where
     }
 }
 
-impl<K: Idx, V> Default for ArrayInterner<K, V, DefaultHashBuilder> {
+impl<K: Idx, V> Default for StructInterner<K, V, DefaultHashBuilder> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<K: Idx, V, S> Index<K> for ArrayInterner<K, V, S> {
+impl<K: Idx, V, S> Index<K> for StructInterner<K, V, S> {
     type Output = V;
 
     fn index(&self, index: K) -> &Self::Output {
