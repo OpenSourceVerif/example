@@ -4,7 +4,7 @@ use rustc_index::{IndexVec, bit_set::DenseBitSet};
 use rustc_middle::mir::{BasicBlock, Body, Local, START_BLOCK, StatementKind};
 use smallvec::SmallVec;
 
-use crate::contracts::{Clause, Spec};
+use crate::spec::{Clause, Spec};
 
 #[derive(Debug, Clone)]
 pub(crate) struct LoopInfo {

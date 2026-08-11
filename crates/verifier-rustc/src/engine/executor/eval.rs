@@ -6,6 +6,7 @@ use rustc_middle::{
     },
     ty::Ty,
 };
+use smallvec::SmallVec;
 use verifier_core::{Context, DefStore, Field, Op, SortDef, Term};
 
 use crate::{
@@ -110,7 +111,9 @@ impl<'a, 'tcx, 'mir> Evaluate<&'mir Rvalue<'tcx>> for Executor<'a, 'tcx> {
             | Rvalue::Aggregate(..)
             | Rvalue::CopyForDeref(..)
             | Rvalue::WrapUnsafeBinder(..)
-            | Rvalue::Reborrow(..) => Err(state.location.error(format!("rvalue `{rvalue:?}`"))),
+            | Rvalue::Reborrow(..) => {
+                Err(state.location.error(format!("unsupported rvalue `{rvalue:?}`")))
+            }
         }
     }
 }
@@ -161,7 +164,7 @@ impl<'a, 'tcx, 'mir> Evaluate<(MirOp, &'mir Operand<'tcx>, &'mir Operand<'tcx>)>
             | MirOp::ShrUnchecked
             | MirOp::Cmp
             | MirOp::Offset => {
-                return Err(location.error(format!("binary operation `{mir_op:?}`")));
+                return Err(location.error(format!("unsupported binary operation `{mir_op:?}`")));
             }
         };
         let value = self.cx.binary(op, lhs_term, rhs_term);
@@ -248,14 +251,14 @@ impl<'a, 'tcx, 'mir, I> Evaluate<&'mir IndexVec<I, Operand<'tcx>>> for Executor<
 where
     I: rustc_index::Idx,
 {
-    type Output = Vec<Term>;
+    type Output = SmallVec<[Term; 4]>;
 
     fn evaluate(
         &mut self,
         state: &State,
         operands: &'mir IndexVec<I, Operand<'tcx>>,
     ) -> Result<Self::Output, ExecutionError> {
-        operands.iter().map(|operand| self.evaluate(state, operand)).collect::<Result<Vec<_>, _>>()
+        operands.iter().map(|operand| self.evaluate(state, operand)).collect()
     }
 }
 

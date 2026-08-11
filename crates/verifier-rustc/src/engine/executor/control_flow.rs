@@ -5,11 +5,11 @@ use smallvec::SmallVec;
 use verifier_core::{Term, contract::instantiate};
 
 use crate::{
-    contracts::{Clause, Slot},
     engine::{
         loop_analysis::LoopInfo,
         obligation::{ExecutionError, LocationExt, Obligation, ObligationKind},
     },
+    spec::{Clause, Slot},
     types::RustcTy,
 };
 
@@ -157,7 +157,7 @@ impl<'a, 'tcx, 'mir> Execute<&'mir StatementKind<'tcx>> for Executor<'a, 'tcx> {
                 self.write_place(&mut state, *place, term)?;
             }
             Kind::SetDiscriminant { .. } => {
-                return Err(location.error(format!("statement `{statement:?}`")));
+                return Err(location.error(format!("unsupported statement `{statement:?}`")));
             }
             Kind::StorageLive(local) | Kind::StorageDead(local) => {
                 state.store[*local] = None;
@@ -167,7 +167,7 @@ impl<'a, 'tcx, 'mir> Execute<&'mir StatementKind<'tcx>> for Executor<'a, 'tcx> {
                 state.facts.push(term);
             }
             Kind::Intrinsic(deref!(other)) => {
-                return Err(location.error(format!("intrinsic `{other:?}`")));
+                return Err(location.error(format!("unsupported intrinsic `{other:?}`")));
             }
             Kind::Nop
             | Kind::FakeRead(_)
@@ -262,7 +262,7 @@ impl<'a, 'tcx, 'mir> Execute<&'mir TerminatorKind<'tcx>> for Executor<'a, 'tcx> 
             | TerminatorKind::Yield { .. }
             | TerminatorKind::CoroutineDrop
             | TerminatorKind::InlineAsm { .. } => {
-                return Err(location.error(format!("terminator `{terminator:?}`")));
+                return Err(location.error(format!("unsupported terminator `{terminator:?}`")));
             }
         }
 

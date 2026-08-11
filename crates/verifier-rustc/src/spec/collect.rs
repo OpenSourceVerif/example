@@ -1,13 +1,14 @@
 use std::{collections::HashMap, ops::Range};
 
 use hir::{Attribute, Expr};
+use rustc_ast::token::Delimiter;
 use rustc_hir::intravisit::Visitor;
 use rustc_hir::{self as hir, intravisit};
 use rustc_middle::{
     mir::{Body, RETURN_PLACE, VarDebugInfoContents},
     ty::TyCtxt,
 };
-use rustc_span::{BytePos, Span, Symbol};
+use rustc_span::{BytePos, Span, Spanned, Symbol};
 use verifier_core::{
     Context, Sort,
     contract::{ResolveError, parse},
@@ -15,9 +16,9 @@ use verifier_core::{
 
 use crate::types::RustcTy;
 
-use super::{Clause, LoopSpec, Slot, Spanned, Spec, SpecError, SpecErrorKind};
+use super::{Clause, LoopSpec, Slot, Spec, SpecError, SpecErrorKind};
 
-type Bindings = HashMap<String, Option<(Sort, Slot)>>;
+type Bindings = HashMap<Symbol, Option<(Sort, Slot)>>;
 
 pub(crate) fn collect<'tcx>(
     cx: &mut Context,
@@ -26,19 +27,23 @@ pub(crate) fn collect<'tcx>(
     body: &Body<'tcx>,
 ) -> Result<Spec, SpecError> {
     let args = bindings(cx, tcx, body, |info| info.argument_index.is_some());
-    if args.contains_key("result") {
-        return Err(SpecError { span: tcx.def_span(owner), kind: SpecErrorKind::ReservedResult });
+    let result = Symbol::intern("result");
+    #[allow(deprecated)]
+    let attrs = tcx.get_all_attrs(owner.to_def_id());
+    if args.contains_key(&result)
+        && let Some(attr) = attrs.iter().find(|attr| is(attr, "ensures"))
+    {
+        return Err(SpecError { span: attr.span(), kind: SpecErrorKind::ReservedResult });
     }
 
     let mut results = args.clone();
     if let Some(sort) = cx.sort(tcx, body.local_decls[RETURN_PLACE].ty) {
-        results.insert("result".to_owned(), Some((sort, Slot::Result)));
+        results.insert(result, Some((sort, Slot::Result)));
     }
     let locals = bindings(cx, tcx, body, |_| true);
     let mut spec = Spec::default();
 
-    #[allow(deprecated)]
-    for attr in tcx.get_all_attrs(owner.to_def_id()) {
+    for attr in attrs {
         if let Some(clause) = clause(cx, tcx, attr, "requires", &args)? {
             spec.requires.push(clause);
         } else if let Some(clause) = clause(cx, tcx, attr, "ensures", &results)? {
@@ -73,7 +78,7 @@ fn bindings<'tcx>(
         let Some(sort) = cx.sort(tcx, body.local_decls[place.local].ty) else { continue };
         let binding = (sort, Slot::Local(place.local));
         bindings
-            .entry(info.name.as_str().to_owned())
+            .entry(info.name)
             .and_modify(|previous| {
                 if *previous != Some(binding) {
                     *previous = None;
@@ -91,8 +96,7 @@ fn clause(
     name: &str,
     bindings: &Bindings,
 ) -> Result<Option<Clause>, SpecError> {
-    let path = [Symbol::intern("verifier"), Symbol::intern(name)];
-    if !attr.path_matches(&path) {
+    if !is(attr, name) {
         return Ok(None);
     }
     let hir::Attribute::Unparsed(item) = attr else {
@@ -101,13 +105,16 @@ fn clause(
     let hir::AttrArgs::Delimited(args) = &item.args else {
         return Err(SpecError { span: attr.span(), kind: SpecErrorKind::Args });
     };
+    if args.delim != Delimiter::Parenthesis {
+        return Err(SpecError { span: attr.span(), kind: SpecErrorKind::Args });
+    }
     let span = args.dspan.open.shrink_to_hi().to(args.dspan.close.shrink_to_lo());
     let text = tcx
         .sess
         .source_map()
         .span_to_snippet(span)
-        .map_err(|_| SpecError { span, kind: SpecErrorKind::Source })?;
-    let node = parse(cx, &text, |name| match bindings.get(name) {
+        .map_err(|_| SpecError { span, kind: SpecErrorKind::Snippet })?;
+    let node = parse(cx, &text, |name| match bindings.get(&Symbol::intern(name)) {
         Some(Some(binding)) => Ok(*binding),
         Some(None) => Err(ResolveError::Ambiguous),
         None => Err(ResolveError::Unknown),
@@ -117,6 +124,10 @@ fn clause(
         kind: SpecErrorKind::Parse(error.kind),
     })?;
     Ok(Some(Spanned { node, span: attr.span() }))
+}
+
+fn is(attr: &Attribute, name: &str) -> bool {
+    attr.path_matches(&[Symbol::intern("verifier"), Symbol::intern(name)])
 }
 
 fn subspan(span: Span, range: Range<usize>) -> Span {

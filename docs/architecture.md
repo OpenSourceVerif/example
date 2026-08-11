@@ -11,19 +11,20 @@ values and strings. It has no verifier-specific concepts.
 
 ## `verifier-core`
 
-`verifier-core` owns symbolic terms, sorts, symbols, their interned context, and
-SMT-LIB rendering. It intentionally has no rustc-private dependencies. This
-keeps the symbolic model independently testable and leaves room for another
-frontend without coupling it to MIR.
+`verifier-core` owns symbolic terms, sorts, symbols, open contract clauses,
+contract parsing and instantiation, their interned context, and SMT-LIB
+rendering. It intentionally has no rustc-private dependencies. This keeps the
+symbolic model independently testable and leaves room for another frontend
+without coupling it to MIR.
 
 ## `verifier-rustc`
 
-`verifier-rustc` is the Rust frontend and verification engine. Its `contracts`
-modules extract and parse source-level attributes. Its `engine` modules analyze
+`verifier-rustc` is the Rust frontend and verification engine. Its `spec`
+modules extract source-level attributes. Its `engine` modules analyze
 MIR loops, symbolically execute supported statements and terminators, and emit
 verification obligations.
 
-The crate exposes `generate_obligations` as its main operation. The symbolic
+The crate exposes `verify` as its main operation. The symbolic
 `Context` does not know how to execute MIR; the frontend creates and owns that
 association for the duration of one function analysis.
 

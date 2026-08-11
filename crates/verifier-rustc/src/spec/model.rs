@@ -1,8 +1,8 @@
 use std::fmt;
 
 use rustc_middle::mir::Local;
-use rustc_span::Span;
-use verifier_core::contract::{Clause as OpenClause, ParseErrorKind};
+use rustc_span::{Span, Spanned};
+use verifier_core::contract::ParseErrorKind;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Slot {
@@ -10,20 +10,14 @@ pub(crate) enum Slot {
     Result,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Spanned<T> {
-    pub node: T,
-    pub span: Span,
-}
+pub(crate) type Clause = Spanned<verifier_core::contract::Clause<Slot>>;
 
-pub(crate) type Clause = Spanned<OpenClause<Slot>>;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct LoopSpec {
     pub invariants: Vec<Clause>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct Spec {
     pub requires: Vec<Clause>,
     pub ensures: Vec<Clause>,
@@ -34,7 +28,7 @@ pub(crate) struct Spec {
 pub enum SpecErrorKind {
     Parse(ParseErrorKind),
     Args,
-    Source,
+    Snippet,
     ReservedResult,
 }
 
@@ -51,7 +45,7 @@ impl fmt::Display for SpecError {
             SpecErrorKind::Args => {
                 f.write_str("contract attribute requires parenthesized arguments")
             }
-            SpecErrorKind::Source => f.write_str("contract source is unavailable"),
+            SpecErrorKind::Snippet => f.write_str("contract source is unavailable"),
             SpecErrorKind::ReservedResult => f.write_str("`result` is reserved in contracts"),
         }
     }

@@ -27,7 +27,10 @@ pub(crate) fn check(script: &str) -> Result<Option<String>, String> {
     let mut lines = stdout.lines();
     match lines.next() {
         Some("unsat") => Ok(None),
-        Some("sat") => Ok(Some(lines.collect::<Vec<_>>().join("\n"))),
+        Some("sat") => {
+            let start = stdout.find('\n').map_or(stdout.len(), |index| index + 1);
+            Ok(Some(stdout[start..].trim_end().to_owned()))
+        }
         Some("unknown") => Err("z3 could not determine whether the obligation is valid".to_owned()),
         _ if !output.status.success() => {
             Err(format!("z3 exited with {}\n{}\n{}", output.status, stdout.trim(), stderr.trim()))

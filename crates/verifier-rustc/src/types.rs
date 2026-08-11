@@ -1,4 +1,5 @@
 use rustc_middle::ty::{IntTy, Ty, TyCtxt, TyKind, UintTy};
+use smallvec::SmallVec;
 use verifier_core::{Context, Sort};
 
 pub(crate) trait RustcTy<'tcx> {
@@ -8,8 +9,10 @@ pub(crate) trait RustcTy<'tcx> {
 impl<'tcx> RustcTy<'tcx> for Context {
     fn sort(&mut self, tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> Option<Sort> {
         if let TyKind::Tuple(fields) = ty.kind() {
-            let sorts =
-                fields.iter().map(|field| self.sort(tcx, field)).collect::<Option<Vec<_>>>()?;
+            let sorts = fields
+                .iter()
+                .map(|field| self.sort(tcx, field))
+                .collect::<Option<SmallVec<[_; 4]>>>()?;
             Some(self.tuple_sort(&sorts))
         } else if ty.is_bool() {
             Some(self.bool_sort())

@@ -3,11 +3,12 @@ use rustc_middle::{
     mir::{BasicBlock, Body, Local, Location, START_BLOCK, VarDebugInfoContents},
     ty::{Ty, TyCtxt, TypingEnv},
 };
+use rustc_span::Symbol;
 use smallvec::SmallVec;
 use verifier_core::{Context, Term, contract::instantiate};
 
 use crate::{
-    contracts::{Slot, Spec},
+    spec::{Slot, Spec},
     types::{RustcTy, integer_bounds, integer_layout},
 };
 
@@ -142,8 +143,10 @@ impl<'a, 'tcx> Executor<'a, 'tcx> {
             let Some(sort) = self.cx.sort(self.tcx, ty) else {
                 return Err(location.error(format!("argument {index} has unsupported type `{ty}`")));
             };
-            let name = self.argument_name(local, index);
-            let symbol = self.cx.symbol(&name, sort);
+            let symbol = match self.argument_name(local, index) {
+                Some(name) => self.cx.symbol(name.as_str(), sort),
+                None => self.cx.symbol(&format!("arg{index}"), sort),
+            };
             let term = self.cx.sym(symbol);
             self.entry[local] = Some(term);
             store[local] = Some(term);
@@ -162,24 +165,20 @@ impl<'a, 'tcx> Executor<'a, 'tcx> {
         Ok(State { location: entry_loc(START_BLOCK), store, facts })
     }
 
-    fn argument_name(&self, local: Local, index: usize) -> String {
-        self.body
-            .var_debug_info
-            .iter()
-            .find_map(|info| {
-                if info.argument_index != Some(index as u16) {
-                    return None;
+    fn argument_name(&self, local: Local, index: usize) -> Option<Symbol> {
+        self.body.var_debug_info.iter().find_map(|info| {
+            if info.argument_index != Some(index as u16) {
+                return None;
+            }
+            match info.value {
+                VarDebugInfoContents::Place(place)
+                    if place.local == local && place.projection.is_empty() =>
+                {
+                    Some(info.name)
                 }
-                match info.value {
-                    VarDebugInfoContents::Place(place)
-                        if place.local == local && place.projection.is_empty() =>
-                    {
-                        Some(info.name.as_str().to_owned())
-                    }
-                    VarDebugInfoContents::Place(..) | VarDebugInfoContents::Const(..) => None,
-                }
-            })
-            .unwrap_or_else(|| format!("arg{index}"))
+                VarDebugInfoContents::Place(..) | VarDebugInfoContents::Const(..) => None,
+            }
+        })
     }
 }
 
@@ -189,16 +188,16 @@ mod tests {
 
     #[test]
     fn assertion_vc_is_guarded_by_its_path_condition() {
-        let mut context = Context::default();
-        let bool_sort = context.bool_sort();
-        let path_symbol = context.symbol("path", bool_sort);
-        let assertion_symbol = context.symbol("assertion", bool_sort);
-        let path = context.sym(path_symbol);
-        let assertion = context.sym(assertion_symbol);
-        let vc = context.implies(path, assertion);
+        let mut cx = Context::default();
+        let bool_sort = cx.bool_sort();
+        let path_symbol = cx.symbol("path", bool_sort);
+        let assertion_symbol = cx.symbol("assertion", bool_sort);
+        let path = cx.sym(path_symbol);
+        let assertion = cx.sym(assertion_symbol);
+        let vc = cx.implies(path, assertion);
 
         assert_eq!(
-            context.get(vc).kind,
+            cx.get(vc).kind,
             verifier_core::TermKind::Binary {
                 op: verifier_core::Op::Implies,
                 lhs: path,

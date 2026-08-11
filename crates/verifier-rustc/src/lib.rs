@@ -4,6 +4,7 @@
 
 // Linking rustc_driver makes rustc's private dependency graph available in
 // dylib form when this crate is built as a test target.
+extern crate rustc_ast;
 extern crate rustc_driver;
 extern crate rustc_hir;
 extern crate rustc_index;
@@ -16,12 +17,12 @@ use rustc_hir::def_id::LocalDefId;
 use rustc_middle::{mir::Body, ty::TyCtxt};
 use verifier_core::Context;
 
-mod contracts;
 mod engine;
+mod spec;
 mod types;
 
-pub use contracts::{SpecError, SpecErrorKind};
 pub use engine::{ExecutionError, Obligation, ObligationKind};
+pub use spec::{SpecError, SpecErrorKind};
 
 pub struct Verification {
     pub cx: Context,
@@ -53,7 +54,7 @@ pub fn verify<'tcx>(
     body: &Body<'tcx>,
 ) -> Result<Verification, Error> {
     let mut cx = Context::default();
-    let spec = contracts::collect(&mut cx, tcx, owner, body).map_err(Error::Spec)?;
+    let spec = spec::collect(&mut cx, tcx, owner, body).map_err(Error::Spec)?;
     let obligations = engine::execute(&mut cx, tcx, body, &spec).map_err(Error::Execution)?;
 
     Ok(Verification { cx, obligations })
