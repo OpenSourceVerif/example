@@ -1,8 +1,8 @@
-use std::fmt;
+use std::{error::Error, fmt::{self, Display, Formatter}};
 
 use rustc_middle::mir::Local;
 use rustc_span::{Span, Spanned};
-use verifier_core::contract::ParseErrorKind;
+use verifier_core::contract::{self, ParseErrorKind};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Slot {
@@ -10,7 +10,7 @@ pub(crate) enum Slot {
     Result,
 }
 
-pub(crate) type Clause = Spanned<verifier_core::contract::Clause<Slot>>;
+pub(crate) type Clause = Spanned<contract::Clause<Slot>>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct LoopSpec {
@@ -38,8 +38,8 @@ pub struct SpecError {
     pub kind: SpecErrorKind,
 }
 
-impl fmt::Display for SpecError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl Display for SpecError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match &self.kind {
             SpecErrorKind::Parse(kind) => kind.fmt(f),
             SpecErrorKind::Args => {
@@ -51,10 +51,10 @@ impl fmt::Display for SpecError {
     }
 }
 
-impl std::error::Error for SpecError {}
+impl Error for SpecError {}
 
-impl fmt::Display for Slot {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl Display for Slot {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Self::Local(local) => write!(f, "local {local:?}"),
             Self::Result => f.write_str("`result`"),

@@ -184,7 +184,7 @@ impl<'a, 'tcx> Executor<'a, 'tcx> {
 
 #[cfg(test)]
 mod tests {
-    use verifier_core::{Context, DefStore};
+    use verifier_core::{Context, DefStore, Op, TermKind};
 
     #[test]
     fn assertion_vc_is_guarded_by_its_path_condition() {
@@ -198,11 +198,7 @@ mod tests {
 
         assert_eq!(
             cx.get(vc).kind,
-            verifier_core::TermKind::Binary {
-                op: verifier_core::Op::Implies,
-                lhs: path,
-                rhs: assertion,
-            }
+            TermKind::Binary { op: Op::Implies, lhs: path, rhs: assertion }
         );
     }
 }

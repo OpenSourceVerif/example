@@ -1,4 +1,4 @@
-use std::fmt;
+use std::fmt::{self, Display, Formatter};
 
 use rustc_index::{IndexVec, bit_set::DenseBitSet};
 use rustc_middle::mir::{BasicBlock, Body, Local, START_BLOCK, StatementKind};
@@ -19,8 +19,8 @@ pub(crate) enum LoopError {
     Count { spec: usize, mir: usize },
 }
 
-impl fmt::Display for LoopError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl Display for LoopError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Self::Count { spec, mir } => {
                 write!(f, "found {spec} source loops but {mir} MIR loops")

@@ -1,11 +1,13 @@
 use std::{collections::HashMap, ops::Range};
 
+use hir::AttrArgs::Delimited;
+use hir::Attribute::Unparsed;
+use hir::def_id::LocalDefId;
 use hir::{Attribute, Expr};
 use rustc_ast::token::Delimiter;
-use rustc_hir::intravisit::Visitor;
-use rustc_hir::{self as hir, intravisit};
+use rustc_hir::{self as hir, intravisit::{self, Visitor}};
 use rustc_middle::{
-    mir::{Body, RETURN_PLACE, VarDebugInfoContents},
+    mir::{Body, RETURN_PLACE, VarDebugInfoContents, VarDebugInfo},
     ty::TyCtxt,
 };
 use rustc_span::{BytePos, Span, Spanned, Symbol};
@@ -23,7 +25,7 @@ type Bindings = HashMap<Symbol, Option<(Sort, Slot)>>;
 pub(crate) fn collect<'tcx>(
     cx: &mut Context,
     tcx: TyCtxt<'tcx>,
-    owner: hir::def_id::LocalDefId,
+    owner: LocalDefId,
     body: &Body<'tcx>,
 ) -> Result<Spec, SpecError> {
     let args = bindings(cx, tcx, body, |info| info.argument_index.is_some());
@@ -67,7 +69,7 @@ fn bindings<'tcx>(
     cx: &mut Context,
     tcx: TyCtxt<'tcx>,
     body: &Body<'tcx>,
-    include: impl Fn(&rustc_middle::mir::VarDebugInfo<'tcx>) -> bool,
+    include: impl Fn(&VarDebugInfo<'tcx>) -> bool,
 ) -> Bindings {
     let mut bindings = Bindings::new();
     for info in body.var_debug_info.iter().filter(|info| include(info)) {
@@ -99,10 +101,10 @@ fn clause(
     if !is(attr, name) {
         return Ok(None);
     }
-    let hir::Attribute::Unparsed(item) = attr else {
+    let Unparsed(deref!(item)) = attr else {
         return Err(SpecError { span: attr.span(), kind: SpecErrorKind::Args });
     };
-    let hir::AttrArgs::Delimited(args) = &item.args else {
+    let Delimited(args) = &item.args else {
         return Err(SpecError { span: attr.span(), kind: SpecErrorKind::Args });
     };
     if args.delim != Delimiter::Parenthesis {

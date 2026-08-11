@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{error::Error, fmt::{self, Display, Formatter}};
 
 use rustc_middle::mir::Location;
 use rustc_span::Span;
@@ -26,8 +26,8 @@ pub struct ExecutionError {
     pub message: String,
 }
 
-impl fmt::Display for ExecutionError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl Display for ExecutionError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         write!(
             formatter,
             "MIR symbolic execution failed at {:?}[{:?}]: {}",
@@ -36,7 +36,7 @@ impl fmt::Display for ExecutionError {
     }
 }
 
-impl std::error::Error for ExecutionError {}
+impl Error for ExecutionError {}
 
 pub(super) trait LocationExt {
     fn error(self, message: impl Into<String>) -> ExecutionError;
