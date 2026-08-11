@@ -1,4 +1,5 @@
 mod context;
+pub mod contract;
 pub mod ir;
 pub mod smt;
 
