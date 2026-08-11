@@ -1,29 +1,8 @@
-use std::{
-    error::Error,
-    fmt::{Display, Formatter, Result as FormatResult},
-};
+use std::fmt;
 
 use rustc_middle::mir::Location;
 use rustc_span::Span;
 use verifier_core::Term;
-
-/// Limits which keep forward exploration finite in the presence of loops and
-/// exponential path growth.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Limits {
-    /// Maximum number of basic blocks visited along any single path.
-    pub max_steps: u32,
-    /// Maximum worklist size at any instant.
-    pub max_pending: u32,
-    /// Maximum total number of symbolic states entering basic blocks.
-    pub max_states: u32,
-}
-
-impl Default for Limits {
-    fn default() -> Self {
-        Self { max_steps: 10_000, max_pending: 1_024, max_states: 100_000 }
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ObligationKind {
@@ -37,7 +16,7 @@ pub enum ObligationKind {
 pub struct Obligation {
     pub kind: ObligationKind,
     pub location: Location,
-    pub span: Option<Span>,
+    pub span: Span,
     pub condition: Term,
 }
 
@@ -47,8 +26,8 @@ pub struct ExecutionError {
     pub message: String,
 }
 
-impl Display for ExecutionError {
-    fn fmt(&self, formatter: &mut Formatter<'_>) -> FormatResult {
+impl fmt::Display for ExecutionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             formatter,
             "MIR symbolic execution failed at {:?}[{:?}]: {}",
@@ -57,7 +36,7 @@ impl Display for ExecutionError {
     }
 }
 
-impl Error for ExecutionError {}
+impl std::error::Error for ExecutionError {}
 
 pub(super) trait LocationExt {
     fn error(self, message: impl Into<String>) -> ExecutionError;

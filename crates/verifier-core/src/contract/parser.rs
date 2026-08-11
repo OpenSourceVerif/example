@@ -40,10 +40,16 @@ pub struct ParseError {
 
 impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.kind.fmt(f)
+    }
+}
+
+impl fmt::Display for ParseErrorKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use Expected as Want;
         use ParseErrorKind as Kind;
 
-        match &self.kind {
+        match self {
             Kind::Unsupported(ch) => write!(f, "unsupported character `{ch}`"),
             Kind::IntOverflow => f.write_str("integer literal is outside the i128 range"),
             Kind::Unknown(name) => write!(f, "unknown variable `{name}`"),

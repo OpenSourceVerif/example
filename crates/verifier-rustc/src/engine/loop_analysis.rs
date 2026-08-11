@@ -1,195 +1,187 @@
-use std::collections::HashMap;
+use std::fmt;
 
+use rustc_index::{IndexVec, bit_set::DenseBitSet};
 use rustc_middle::mir::{BasicBlock, Body, Local, START_BLOCK, StatementKind};
+use smallvec::SmallVec;
 
-use crate::contracts::{Clause, FunctionSpec};
+use crate::contracts::{Clause, Spec};
 
 #[derive(Debug, Clone)]
 pub(crate) struct LoopInfo {
     pub header: BasicBlock,
-    pub blocks: Vec<bool>,
-    pub modified_locals: Vec<Local>,
+    pub blocks: DenseBitSet<BasicBlock>,
+    pub modified: DenseBitSet<Local>,
     pub invariants: Vec<Clause>,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LoopError {
+    Count { spec: usize, mir: usize },
+}
+
+impl fmt::Display for LoopError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Count { spec, mir } => {
+                write!(f, "found {spec} source loops but {mir} MIR loops")
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub(crate) struct LoopAnalysis {
     loops: Vec<LoopInfo>,
-    by_header: HashMap<BasicBlock, usize>,
-    backedges: HashMap<(BasicBlock, BasicBlock), usize>,
+    by_header: IndexVec<BasicBlock, Option<usize>>,
+    backedges: IndexVec<BasicBlock, SmallVec<[(BasicBlock, usize); 2]>>,
 }
 
 impl LoopAnalysis {
-    pub fn new(body: &Body<'_>, spec: &FunctionSpec) -> Result<Self, String> {
-        let block_count = body.basic_blocks.len();
-        let mut predecessors = vec![Vec::new(); block_count];
-        for (source, data) in body.basic_blocks.iter_enumerated() {
-            for target in data.terminator().successors() {
-                predecessors[target.index()].push(source);
-            }
-        }
+    pub fn new(body: &Body<'_>, spec: &Spec) -> Result<Self, LoopError> {
+        let count = body.basic_blocks.len();
+        let dominators = body.basic_blocks.dominators();
+        let predecessors = body.basic_blocks.predecessors();
+        let mut latches = IndexVec::from_elem_n(SmallVec::<[BasicBlock; 2]>::new(), count);
 
-        let dominators = compute_dominators(body, &predecessors);
-        let mut latches_by_header: HashMap<BasicBlock, Vec<BasicBlock>> = HashMap::new();
         for (source, data) in body.basic_blocks.iter_enumerated() {
+            let reachable =
+                source == START_BLOCK || dominators.immediate_dominator(source).is_some();
+            if !reachable {
+                continue;
+            }
             for target in data.terminator().successors() {
-                if dominators[source.index()][target.index()] {
-                    latches_by_header.entry(target).or_default().push(source);
+                if dominators.dominates(target, source) {
+                    latches[target].push(source);
                 }
             }
         }
 
-        let mut loops = Vec::new();
-        for (header, latches) in latches_by_header {
-            let blocks = natural_loop_blocks(header, &latches, &predecessors, block_count);
-            let modified_locals = modified_locals(body, &blocks);
-            loops.push(LoopInfo { header, blocks, modified_locals, invariants: Vec::new() });
-        }
-        loops.sort_by_key(|info| info.header.index());
+        let mut loops = latches
+            .iter_enumerated()
+            .filter(|(_, latches)| !latches.is_empty())
+            .map(|(header, latches)| {
+                let blocks = natural_loop(header, latches, |block| &predecessors[block], count);
+                let modified = modified(body, &blocks);
+                LoopInfo { header, blocks, modified, invariants: Vec::new() }
+            })
+            .collect::<Vec<_>>();
+        loops.sort_by_key(|info| body.basic_blocks[info.header].terminator().source_info.span.lo());
 
-        for loop_spec in &spec.loops {
-            let mut candidates = loops
-                .iter()
-                .enumerate()
-                .filter_map(|(index, info)| {
-                    let header_span = body.basic_blocks[info.header].terminator().source_info.span;
-                    loop_spec.span.contains(header_span).then_some((index, header_span.lo()))
-                })
-                .collect::<Vec<_>>();
-            candidates.sort_by_key(|(_, lo)| *lo);
-            let Some((index, _)) = candidates.first().copied() else {
-                return Err("could not map loop invariant to a MIR loop header".to_owned());
-            };
-            if !loops[index].invariants.is_empty() {
-                return Err(
-                    "multiple annotated source loops map to the same MIR loop header".to_owned()
-                );
-            }
-            loops[index].invariants = loop_spec.invariants.clone();
+        if spec.loops.len() != loops.len() {
+            return Err(LoopError::Count { spec: spec.loops.len(), mir: loops.len() });
+        }
+        for (info, loop_spec) in loops.iter_mut().zip(&spec.loops) {
+            info.invariants.clone_from(&loop_spec.invariants);
         }
 
-        let mut analysis = Self { loops, ..Self::default() };
-        for (index, info) in analysis.loops.iter().enumerate() {
-            analysis.by_header.insert(info.header, index);
-            for source in body.basic_blocks.indices() {
-                if info.blocks[source.index()]
-                    && body.basic_blocks[source]
-                        .terminator()
-                        .successors()
-                        .any(|target| target == info.header)
+        let mut by_header = IndexVec::from_elem_n(None, count);
+        let mut backedges = IndexVec::from_elem_n(SmallVec::new(), count);
+        for (index, info) in loops.iter().enumerate() {
+            by_header[info.header] = Some(index);
+            for source in info.blocks.iter() {
+                if body.basic_blocks[source]
+                    .terminator()
+                    .successors()
+                    .any(|target| target == info.header)
                 {
-                    analysis.backedges.insert((source, info.header), index);
+                    backedges[source].push((info.header, index));
                 }
             }
         }
-        Ok(analysis)
+
+        Ok(Self { loops, by_header, backedges })
     }
 
     pub fn header(&self, block: BasicBlock) -> Option<&LoopInfo> {
-        self.by_header.get(&block).map(|index| &self.loops[*index])
+        self.by_header[block].map(|index| &self.loops[index])
     }
 
     pub fn backedge(&self, source: BasicBlock, target: BasicBlock) -> Option<&LoopInfo> {
-        self.backedges.get(&(source, target)).map(|index| &self.loops[*index])
+        self.backedges[source]
+            .iter()
+            .find_map(|(header, index)| (*header == target).then(|| &self.loops[*index]))
     }
 
     pub fn is_external_entry(&self, source: BasicBlock, info: &LoopInfo) -> bool {
-        !info.blocks[source.index()] || source == info.header && source == START_BLOCK
+        !info.blocks.contains(source) || source == info.header && source == START_BLOCK
     }
 }
 
-fn compute_dominators(body: &Body<'_>, predecessors: &[Vec<BasicBlock>]) -> Vec<Vec<bool>> {
-    let count = body.basic_blocks.len();
-    let mut dominators = vec![vec![true; count]; count];
-    dominators[START_BLOCK.index()].fill(false);
-    dominators[START_BLOCK.index()][START_BLOCK.index()] = true;
-
-    let mut changed = true;
-    while changed {
-        changed = false;
-        for block in body.basic_blocks.indices() {
-            if block == START_BLOCK {
-                continue;
-            }
-            let preds = &predecessors[block.index()];
-            let mut next = vec![true; count];
-            if preds.is_empty() {
-                next.fill(false);
-            } else {
-                for pred in preds {
-                    for index in 0..count {
-                        next[index] &= dominators[pred.index()][index];
-                    }
-                }
-            }
-            next[block.index()] = true;
-            if next != dominators[block.index()] {
-                dominators[block.index()] = next;
-                changed = true;
-            }
-        }
-    }
-    dominators
-}
-
-fn natural_loop_blocks(
+fn natural_loop<'a>(
     header: BasicBlock,
     latches: &[BasicBlock],
-    predecessors: &[Vec<BasicBlock>],
+    predecessors: impl Fn(BasicBlock) -> &'a [BasicBlock],
     count: usize,
-) -> Vec<bool> {
-    let mut blocks = vec![false; count];
-    blocks[header.index()] = true;
-    let mut pending = Vec::new();
-    for latch in latches {
-        if !blocks[latch.index()] {
-            blocks[latch.index()] = true;
-            pending.push(*latch);
+) -> DenseBitSet<BasicBlock> {
+    let mut blocks = DenseBitSet::new_empty(count);
+    blocks.insert(header);
+    let mut pending = SmallVec::<[BasicBlock; 8]>::new();
+    for &latch in latches {
+        if blocks.insert(latch) {
+            pending.push(latch);
         }
     }
     while let Some(block) = pending.pop() {
-        for predecessor in &predecessors[block.index()] {
-            if !blocks[predecessor.index()] {
-                blocks[predecessor.index()] = true;
-                pending.push(*predecessor);
+        for &predecessor in predecessors(block) {
+            if blocks.insert(predecessor) {
+                pending.push(predecessor);
             }
         }
     }
     blocks
 }
 
-fn modified_locals(body: &Body<'_>, blocks: &[bool]) -> Vec<Local> {
-    let mut modified = vec![false; body.local_decls.len()];
-    for block in body.basic_blocks.indices().filter(|block| blocks[block.index()]) {
+fn modified(body: &Body<'_>, blocks: &DenseBitSet<BasicBlock>) -> DenseBitSet<Local> {
+    let mut modified = DenseBitSet::new_empty(body.local_decls.len());
+    for block in blocks.iter() {
         for statement in &body.basic_blocks[block].statements {
             match &statement.kind {
-                StatementKind::Assign(assignment) => modified[assignment.0.local.index()] = true,
-                StatementKind::SetDiscriminant { place, .. } => {
-                    modified[place.local.index()] = true
+                StatementKind::Assign(assignment) => {
+                    modified.insert(assignment.0.local);
                 }
-                _ => {}
+                StatementKind::SetDiscriminant { place, .. } => {
+                    modified.insert(place.local);
+                }
+                StatementKind::FakeRead(_)
+                | StatementKind::Intrinsic(_)
+                | StatementKind::StorageLive(_)
+                | StatementKind::StorageDead(_)
+                | StatementKind::PlaceMention(_)
+                | StatementKind::AscribeUserType(_, _)
+                | StatementKind::Coverage(_)
+                | StatementKind::ConstEvalCounter
+                | StatementKind::BackwardIncompatibleDropHint { .. }
+                | StatementKind::Nop => {}
             }
         }
     }
-    body.local_decls.indices().filter(|local| modified[local.index()]).collect()
+    modified
 }
 
 #[cfg(test)]
 mod tests {
-    use super::natural_loop_blocks;
+    use rustc_index::{IndexVec, bit_set::DenseBitSet};
     use rustc_middle::mir::BasicBlock;
+    use smallvec::{SmallVec, smallvec};
+
+    use super::natural_loop;
 
     #[test]
     fn collects_a_natural_loop_from_its_latch() {
         let header = BasicBlock::from_usize(1);
         let latch = BasicBlock::from_usize(3);
-        let predecessors = vec![
-            vec![],
-            vec![BasicBlock::from_usize(0), latch],
-            vec![header],
-            vec![BasicBlock::from_usize(2)],
-        ];
-        let blocks = natural_loop_blocks(header, &[latch], &predecessors, 4);
-        assert_eq!(blocks, vec![false, true, true, true]);
+        let predecessors: IndexVec<BasicBlock, SmallVec<[BasicBlock; 2]>> = [
+            smallvec![],
+            smallvec![BasicBlock::from_usize(0), latch],
+            smallvec![header],
+            smallvec![BasicBlock::from_usize(2)],
+        ]
+        .into_iter()
+        .collect();
+        let blocks = natural_loop(header, &[latch], |block| &predecessors[block], 4);
+        let mut expected = DenseBitSet::new_empty(4);
+        expected.insert_range(header..=latch);
+
+        assert_eq!(blocks, expected);
     }
 }

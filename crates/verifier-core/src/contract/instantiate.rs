@@ -1,3 +1,5 @@
+use std::fmt;
+
 use smallvec::SmallVec;
 
 use crate::{Context, DefStore, Sort, Term, TermKind};
@@ -10,6 +12,20 @@ pub enum InstantiateError<B> {
     Unbound(B),
     Sort { param: u32, expected: Sort, actual: Sort },
 }
+
+impl<B: fmt::Display> fmt::Display for InstantiateError<B> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Missing(param) => write!(f, "missing binding for parameter {param}"),
+            Self::Unbound(binding) => write!(f, "no value for {binding}"),
+            Self::Sort { param, expected, actual } => {
+                write!(f, "parameter {param} expects {expected:?}, found {actual:?}")
+            }
+        }
+    }
+}
+
+impl<B: fmt::Debug + fmt::Display> std::error::Error for InstantiateError<B> {}
 
 pub fn instantiate<B: Copy>(
     cx: &mut Context,

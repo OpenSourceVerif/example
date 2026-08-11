@@ -2,14 +2,15 @@ use rustc_middle::mir::{
     BasicBlock, Location, NonDivergingIntrinsic, RETURN_PLACE, StatementKind, TerminatorKind,
 };
 use smallvec::SmallVec;
-use verifier_core::Term;
+use verifier_core::{Term, contract::instantiate};
 
 use crate::{
-    contracts::{Clause, Source, instantiate},
+    contracts::{Clause, Slot},
     engine::{
         loop_analysis::LoopInfo,
         obligation::{ExecutionError, LocationExt, Obligation, ObligationKind},
     },
+    types::RustcTy,
 };
 
 use super::{Evaluate, Execute, Executor, State, conjoin, entry_loc};
@@ -20,9 +21,9 @@ impl<'a, 'tcx> Executor<'a, 'tcx> {
         clause: &Clause,
         state: &State,
     ) -> Result<Term, ExecutionError> {
-        instantiate(self.context, clause, |source| match source {
-            Source::Local(local) => state.store[local],
-            Source::Result => None,
+        instantiate(self.cx, &clause.node, |slot| match slot {
+            Slot::Local(local) => state.store[local],
+            Slot::Result => None,
         })
         .map_err(|message| state.location.error(format!("invalid loop invariant: {message}")))
     }
@@ -33,9 +34,9 @@ impl<'a, 'tcx> Executor<'a, 'tcx> {
         value: Term,
         location: Location,
     ) -> Result<Term, ExecutionError> {
-        instantiate(self.context, clause, |source| match source {
-            Source::Local(local) => self.entry[local],
-            Source::Result => Some(value),
+        instantiate(self.cx, &clause.node, |slot| match slot {
+            Slot::Local(local) => self.entry[local],
+            Slot::Result => Some(value),
         })
         .map_err(|message| location.error(format!("invalid postcondition: {message}")))
     }
@@ -76,24 +77,24 @@ impl<'a, 'tcx> Executor<'a, 'tcx> {
             )));
         }
 
-        let premise = conjoin(self.context, &state.facts);
+        let premise = conjoin(self.cx, &state.facts);
         for clause in &info.invariants {
             let invariant = self.instantiate_in_state(clause, &state)?;
-            let condition = self.context.implies(premise, invariant);
+            let condition = self.cx.implies(premise, invariant);
             self.obligations.push(Obligation {
                 kind: ObligationKind::LoopInvariantInitialization,
                 location: state.location,
-                span: Some(clause.span),
+                span: clause.span,
                 condition,
             });
         }
 
-        for local in &info.modified_locals {
-            if state.store[*local].is_none() {
+        for local in info.modified.iter() {
+            if state.store[local].is_none() {
                 continue;
             }
-            let ty = self.body.local_decls[*local].ty;
-            let Some(sort) = self.sort_for_ty(ty) else { continue };
+            let ty = self.body.local_decls[local].ty;
+            let Some(sort) = self.cx.sort(self.tcx, ty) else { continue };
             let name = format!(
                 "loop_{}_local_{}_{}",
                 info.header.index(),
@@ -101,9 +102,9 @@ impl<'a, 'tcx> Executor<'a, 'tcx> {
                 self.fresh_counter
             );
             self.fresh_counter += 1;
-            let symbol = self.context.symbol(&name, sort);
-            let value = self.context.sym(symbol);
-            state.store[*local] = Some(value);
+            let symbol = self.cx.symbol(&name, sort);
+            let value = self.cx.sym(symbol);
+            state.store[local] = Some(value);
             self.add_integer_range_facts(ty, value, &mut state.facts);
         }
 
@@ -123,14 +124,14 @@ impl<'a, 'tcx> Executor<'a, 'tcx> {
                 info.header
             )));
         }
-        let premise = conjoin(self.context, &state.facts);
+        let premise = conjoin(self.cx, &state.facts);
         for clause in &info.invariants {
             let invariant = self.instantiate_in_state(clause, &state)?;
-            let condition = self.context.implies(premise, invariant);
+            let condition = self.cx.implies(premise, invariant);
             self.obligations.push(Obligation {
                 kind: ObligationKind::LoopInvariantPreservation,
                 location: state.location,
-                span: Some(clause.span),
+                span: clause.span,
                 condition,
             });
         }
@@ -155,8 +156,8 @@ impl<'a, 'tcx, 'mir> Execute<&'mir StatementKind<'tcx>> for Executor<'a, 'tcx> {
                 let term = self.evaluate(&state, rvalue)?;
                 self.write_place(&mut state, *place, term)?;
             }
-            Kind::SetDiscriminant { place: deref!(_place), variant_index: _ } => {
-                todo!();
+            Kind::SetDiscriminant { .. } => {
+                return Err(location.error(format!("statement `{statement:?}`")));
             }
             Kind::StorageLive(local) | Kind::StorageDead(local) => {
                 state.store[*local] = None;
@@ -190,6 +191,7 @@ impl<'a, 'tcx, 'mir> Execute<&'mir TerminatorKind<'tcx>> for Executor<'a, 'tcx> 
         terminator: &'mir TerminatorKind<'tcx>,
         pending: &mut Vec<State>,
     ) -> Result<(), ExecutionError> {
+        let location = state.location;
         match terminator {
             TerminatorKind::Goto { target } => {
                 self.transition(state, *target, pending)?;
@@ -209,21 +211,22 @@ impl<'a, 'tcx, 'mir> Execute<&'mir TerminatorKind<'tcx>> for Executor<'a, 'tcx> 
                 }
 
                 for equality in excluded {
-                    let inequality = self.context.not(equality);
+                    let inequality = self.cx.not(equality);
                     state.facts.push(inequality);
                 }
                 self.transition(state, targets.otherwise(), pending)?;
             }
             TerminatorKind::Assert { cond, expected, target, .. } => {
                 let assertion = self.evaluate(&state, (cond, *expected))?;
-                let current_fact = conjoin(self.context, &state.facts);
-                let implication = self.context.implies(current_fact, assertion);
+                let current_fact = conjoin(self.cx, &state.facts);
+                let implication = self.cx.implies(current_fact, assertion);
                 self.obligations.push(Obligation {
                     kind: ObligationKind::RuntimeAssertion,
                     location: state.location,
-                    span: Some(
-                        self.body.basic_blocks[state.location.block].terminator().source_info.span,
-                    ),
+                    span: self.body.basic_blocks[state.location.block]
+                        .terminator()
+                        .source_info
+                        .span,
                     condition: implication,
                 });
 
@@ -231,17 +234,17 @@ impl<'a, 'tcx, 'mir> Execute<&'mir TerminatorKind<'tcx>> for Executor<'a, 'tcx> 
                 self.transition(state, *target, pending)?;
             }
             TerminatorKind::Return => {
-                let fact = conjoin(self.context, &state.facts);
+                let fact = conjoin(self.cx, &state.facts);
                 let value = state.store[RETURN_PLACE]
                     .ok_or_else(|| state.location.error("return place is uninitialized"))?;
                 for clause in &self.spec.ensures {
                     let postcondition =
                         self.instantiate_postcondition(clause, value, state.location)?;
-                    let condition = self.context.implies(fact, postcondition);
+                    let condition = self.cx.implies(fact, postcondition);
                     self.obligations.push(Obligation {
                         kind: ObligationKind::Postcondition,
                         location: state.location,
-                        span: Some(clause.span),
+                        span: clause.span,
                         condition,
                     });
                 }
@@ -251,14 +254,16 @@ impl<'a, 'tcx, 'mir> Execute<&'mir TerminatorKind<'tcx>> for Executor<'a, 'tcx> 
             | TerminatorKind::FalseUnwind { real_target, .. } => {
                 self.transition(state, *real_target, pending)?;
             }
-            TerminatorKind::UnwindResume => todo!(),
-            TerminatorKind::UnwindTerminate(..) => todo!(),
-            TerminatorKind::Drop { .. } => todo!(),
-            TerminatorKind::Call { .. } => todo!(),
-            TerminatorKind::TailCall { .. } => todo!(),
-            TerminatorKind::Yield { .. } => todo!(),
-            TerminatorKind::CoroutineDrop => todo!(),
-            TerminatorKind::InlineAsm { .. } => todo!(),
+            TerminatorKind::UnwindResume
+            | TerminatorKind::UnwindTerminate(..)
+            | TerminatorKind::Drop { .. }
+            | TerminatorKind::Call { .. }
+            | TerminatorKind::TailCall { .. }
+            | TerminatorKind::Yield { .. }
+            | TerminatorKind::CoroutineDrop
+            | TerminatorKind::InlineAsm { .. } => {
+                return Err(location.error(format!("terminator `{terminator:?}`")));
+            }
         }
 
         Ok(())

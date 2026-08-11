@@ -1,28 +1,32 @@
 use rustc_index::IndexVec;
 use rustc_middle::{
     mir::{BasicBlock, Body, Local, Location, START_BLOCK, VarDebugInfoContents},
-    ty::{TyCtxt, TypingEnv},
+    ty::{Ty, TyCtxt, TypingEnv},
 };
 use smallvec::SmallVec;
-use verifier_core::{Context, Term};
+use verifier_core::{Context, Term, contract::instantiate};
 
-use crate::contracts::{FunctionSpec, Source, instantiate};
+use crate::{
+    contracts::{Slot, Spec},
+    types::{RustcTy, integer_bounds, integer_layout},
+};
 
 use super::{
     loop_analysis::LoopAnalysis,
-    obligation::{ExecutionError, Limits, LocationExt, Obligation},
+    obligation::{ExecutionError, LocationExt, Obligation},
 };
 
 mod control_flow;
 mod eval;
-mod numeric;
 
 #[derive(Debug, Clone)]
 struct State {
+    /// our program counter.
     location: Location,
+    /// symbolic state.
     store: IndexVec<Local, Option<Term>>,
+    /// conditions on current path.
     facts: SmallVec<[Term; 8]>,
-    steps: u32,
 }
 
 /// Evaluates an argument without changing the symbolic state's control flow.
@@ -47,12 +51,11 @@ fn entry_loc(block: BasicBlock) -> Location {
 }
 
 struct Executor<'a, 'tcx> {
-    context: &'a mut Context,
+    cx: &'a mut Context,
     tcx: TyCtxt<'tcx>,
     body: &'a Body<'tcx>,
     typing_env: TypingEnv<'tcx>,
-    limits: Limits,
-    spec: &'a FunctionSpec,
+    spec: &'a Spec,
     loops: LoopAnalysis,
     entry: IndexVec<Local, Option<Term>>,
     fresh_counter: u32,
@@ -61,21 +64,19 @@ struct Executor<'a, 'tcx> {
 
 /// Executes a rustc MIR control-flow graph using symbolic values and generates
 /// the obligations induced by its source-level contracts.
-pub(crate) fn execute_with_spec<'tcx>(
-    context: &mut Context,
+pub(crate) fn execute<'tcx>(
+    cx: &mut Context,
     tcx: TyCtxt<'tcx>,
     body: &Body<'tcx>,
-    spec: &FunctionSpec,
+    spec: &Spec,
 ) -> Result<Vec<Obligation>, ExecutionError> {
-    let limits = Limits::default();
     let location = entry_loc(START_BLOCK);
-    let loops = LoopAnalysis::new(body, spec).map_err(|message| location.error(message))?;
+    let loops = LoopAnalysis::new(body, spec).map_err(|error| location.error(error.to_string()))?;
     Executor {
-        context,
+        cx,
         tcx,
         body,
         typing_env: TypingEnv::post_analysis(tcx, body.source.def_id()),
-        limits,
         spec,
         loops,
         entry: body.local_decls.iter().map(|_| None).collect(),
@@ -85,42 +86,37 @@ pub(crate) fn execute_with_spec<'tcx>(
     .run()
 }
 
-fn conjoin<'a>(context: &mut Context, terms: impl IntoIterator<Item = &'a Term>) -> Term {
+fn conjoin<'a>(cx: &mut Context, terms: impl IntoIterator<Item = &'a Term>) -> Term {
     let mut terms = terms.into_iter().copied();
 
     if let Some(first) = terms.next() {
-        terms.fold(first, |lhs, rhs| context.and(lhs, rhs))
+        terms.fold(first, |lhs, rhs| cx.and(lhs, rhs))
     } else {
-        context.bool_lit(true)
+        cx.bool_lit(true)
     }
 }
 
 impl<'a, 'tcx> Executor<'a, 'tcx> {
+    fn add_integer_range_facts(
+        &mut self,
+        ty: Ty<'tcx>,
+        term: Term,
+        facts: &mut SmallVec<[Term; 8]>,
+    ) {
+        let Some(bounds) = integer_layout(self.tcx, ty).and_then(integer_bounds) else { return };
+        let minimum = self.cx.int_lit(bounds.0);
+        let maximum = self.cx.int_lit(bounds.1);
+        facts.push(self.cx.ge(term, minimum));
+        facts.push(self.cx.le(term, maximum));
+    }
+
     fn run(mut self) -> Result<Vec<Obligation>, ExecutionError> {
         let initial = self.initial_state()?;
         let mut pending = vec![initial];
-        let mut explored = 0;
 
-        while let Some(mut state) = pending.pop() {
+        while let Some(state) = pending.pop() {
             let location = state.location;
             let data = &self.body.basic_blocks[location.block];
-
-            if location.statement_index == 0 {
-                explored += 1;
-                if explored > self.limits.max_states {
-                    return Err(location.error(format!(
-                        "execution exceeded the {}-state exploration limit",
-                        self.limits.max_states
-                    )));
-                }
-                if state.steps >= self.limits.max_steps {
-                    return Err(location.error(format!(
-                        "path exceeded the {}-step exploration limit (the body may contain a loop)",
-                        self.limits.max_steps
-                    )));
-                }
-                state.steps += 1;
-            }
 
             if let Some(statement) = data.statements.get(location.statement_index) {
                 self.execute(state, &statement.kind, &mut pending)?;
@@ -128,13 +124,6 @@ impl<'a, 'tcx> Executor<'a, 'tcx> {
                 self.execute(state, &data.terminator().kind, &mut pending)?;
             } else {
                 return Err(location.error("program counter is outside its basic block"));
-            }
-
-            if pending.len() > self.limits.max_pending as usize {
-                return Err(location.error(format!(
-                    "more than {} symbolic paths are pending",
-                    self.limits.max_pending
-                )));
             }
         }
 
@@ -150,27 +139,27 @@ impl<'a, 'tcx> Executor<'a, 'tcx> {
         for index in 1..=self.body.arg_count {
             let local = Local::from_usize(index);
             let ty = self.body.local_decls[local].ty;
-            let Some(sort) = self.sort_for_ty(ty) else {
+            let Some(sort) = self.cx.sort(self.tcx, ty) else {
                 return Err(location.error(format!("argument {index} has unsupported type `{ty}`")));
             };
             let name = self.argument_name(local, index);
-            let symbol = self.context.symbol(&name, sort);
-            let term = self.context.sym(symbol);
+            let symbol = self.cx.symbol(&name, sort);
+            let term = self.cx.sym(symbol);
             self.entry[local] = Some(term);
             store[local] = Some(term);
             self.add_integer_range_facts(ty, term, &mut facts);
         }
 
         for clause in &self.spec.requires {
-            let term = instantiate(self.context, clause, |source| match source {
-                Source::Local(local) => store[local],
-                Source::Result => None,
+            let term = instantiate(self.cx, &clause.node, |slot| match slot {
+                Slot::Local(local) => store[local],
+                Slot::Result => None,
             })
             .map_err(|message| location.error(format!("invalid precondition: {message}")))?;
             facts.push(term);
         }
 
-        Ok(State { location: entry_loc(START_BLOCK), store, facts, steps: 0 })
+        Ok(State { location: entry_loc(START_BLOCK), store, facts })
     }
 
     fn argument_name(&self, local: Local, index: usize) -> String {

@@ -1,153 +1,158 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, ops::Range};
 
-use hir::Expr;
-use hir::def_id::LocalDefId;
+use hir::{Attribute, Expr};
 use rustc_hir::intravisit::Visitor;
 use rustc_hir::{self as hir, intravisit};
 use rustc_middle::{
     mir::{Body, RETURN_PLACE, VarDebugInfoContents},
-    ty::{Ty, TyCtxt, TyKind, UintTy},
+    ty::TyCtxt,
 };
-use rustc_span::Span;
-use verifier_core::{Context, Sort};
+use rustc_span::{BytePos, Span, Symbol};
+use verifier_core::{
+    Context, Sort,
+    contract::{ResolveError, parse},
+};
 
-use super::{Binding, FunctionSpec, LoopSpec, Source, SpecError, parser::parse_clause};
+use crate::types::RustcTy;
 
-pub(crate) fn collect_function_spec<'tcx>(
-    context: &mut Context,
+use super::{Clause, LoopSpec, Slot, Spanned, Spec, SpecError, SpecErrorKind};
+
+type Bindings = HashMap<String, Option<(Sort, Slot)>>;
+
+pub(crate) fn collect<'tcx>(
+    cx: &mut Context,
     tcx: TyCtxt<'tcx>,
-    owner: LocalDefId,
+    owner: hir::def_id::LocalDefId,
     body: &Body<'tcx>,
-) -> Result<FunctionSpec, SpecError> {
-    let bindings = collect_bindings(context, tcx, body);
-    let mut state_bindings = bindings.clone();
-    state_bindings.remove("result");
-    let mut spec = FunctionSpec::default();
+) -> Result<Spec, SpecError> {
+    let args = bindings(cx, tcx, body, |info| info.argument_index.is_some());
+    if args.contains_key("result") {
+        return Err(SpecError { span: tcx.def_span(owner), kind: SpecErrorKind::ReservedResult });
+    }
+
+    let mut results = args.clone();
+    if let Some(sort) = cx.sort(tcx, body.local_decls[RETURN_PLACE].ty) {
+        results.insert("result".to_owned(), Some((sort, Slot::Result)));
+    }
+    let locals = bindings(cx, tcx, body, |_| true);
+    let mut spec = Spec::default();
 
     #[allow(deprecated)]
-    for attribute in tcx.get_all_attrs(owner.to_def_id()) {
-        let snippet = tcx.sess.source_map().span_to_snippet(attribute.span()).ok();
-        let Some(snippet) = snippet else { continue };
-        if let Some(expression) = attribute_expression(&snippet, "requires") {
-            spec.requires.push(parse_clause(
-                context,
-                &state_bindings,
-                expression,
-                attribute.span(),
-            )?);
-        } else if let Some(expression) = attribute_expression(&snippet, "ensures") {
-            spec.ensures.push(parse_clause(context, &bindings, expression, attribute.span())?);
+    for attr in tcx.get_all_attrs(owner.to_def_id()) {
+        if let Some(clause) = clause(cx, tcx, attr, "requires", &args)? {
+            spec.requires.push(clause);
+        } else if let Some(clause) = clause(cx, tcx, attr, "ensures", &results)? {
+            spec.ensures.push(clause);
         }
     }
 
     let hir_body = tcx.hir_body_owned_by(owner);
-    let mut collector = LoopCollector { tcx, loops: Vec::new() };
+    let mut collector =
+        LoopCollector { cx, tcx, bindings: &locals, loops: Vec::new(), error: None };
     collector.visit_expr(hir_body.value);
-    for (span, attributes) in collector.loops {
-        let mut invariants = Vec::new();
-        for (attribute_span, snippet) in attributes {
-            if let Some(expression) = attribute_expression(&snippet, "invariant") {
-                invariants.push(parse_clause(
-                    context,
-                    &state_bindings,
-                    expression,
-                    attribute_span,
-                )?);
-            }
-        }
-        if !invariants.is_empty() {
-            spec.loops.push(LoopSpec { span, invariants });
-        }
+    if let Some(error) = collector.error {
+        return Err(error);
     }
+    spec.loops = collector.loops;
 
     Ok(spec)
 }
 
-fn collect_bindings<'tcx>(
-    context: &mut Context,
+fn bindings<'tcx>(
+    cx: &mut Context,
     tcx: TyCtxt<'tcx>,
     body: &Body<'tcx>,
-) -> HashMap<String, Binding> {
-    let mut bindings: HashMap<String, Binding> = HashMap::new();
-    for info in &body.var_debug_info {
+    include: impl Fn(&rustc_middle::mir::VarDebugInfo<'tcx>) -> bool,
+) -> Bindings {
+    let mut bindings = Bindings::new();
+    for info in body.var_debug_info.iter().filter(|info| include(info)) {
         let VarDebugInfoContents::Place(place) = info.value else { continue };
         if !place.projection.is_empty() {
             continue;
         }
-        let Some(sort) = sort_for_ty(context, tcx, body.local_decls[place.local].ty) else {
-            continue;
-        };
-        let name = info.name.as_str().to_owned();
-        let binding = Binding { sort, source: Source::Local(place.local), ambiguous: false };
-        if let Some(previous) = bindings.get_mut(&name) {
-            if previous.source != binding.source || previous.sort != binding.sort {
-                previous.ambiguous = true;
-            }
-        } else {
-            bindings.insert(name, binding);
-        }
-    }
-
-    let return_ty = body.local_decls[RETURN_PLACE].ty;
-    if let Some(sort) = sort_for_ty(context, tcx, return_ty) {
-        bindings.insert(
-            "result".to_owned(),
-            Binding { sort, source: Source::Result, ambiguous: false },
-        );
+        let Some(sort) = cx.sort(tcx, body.local_decls[place.local].ty) else { continue };
+        let binding = (sort, Slot::Local(place.local));
+        bindings
+            .entry(info.name.as_str().to_owned())
+            .and_modify(|previous| {
+                if *previous != Some(binding) {
+                    *previous = None;
+                }
+            })
+            .or_insert(Some(binding));
     }
     bindings
 }
 
-fn sort_for_ty<'tcx>(context: &mut Context, tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> Option<Sort> {
-    if let TyKind::Tuple(fields) = ty.kind() {
-        let mut sorts = Vec::with_capacity(fields.len());
-        for field in fields.iter() {
-            sorts.push(sort_for_ty(context, tcx, field)?);
-        }
-        return Some(context.tuple_sort(&sorts));
+fn clause(
+    cx: &mut Context,
+    tcx: TyCtxt<'_>,
+    attr: &Attribute,
+    name: &str,
+    bindings: &Bindings,
+) -> Result<Option<Clause>, SpecError> {
+    let path = [Symbol::intern("verifier"), Symbol::intern(name)];
+    if !attr.path_matches(&path) {
+        return Ok(None);
     }
-    if ty.is_bool() {
-        return Some(context.bool_sort());
-    }
-    let supported_integer = match ty.kind() {
-        TyKind::Int(_) => true,
-        TyKind::Uint(UintTy::U128) => false,
-        TyKind::Uint(UintTy::Usize) => tcx.data_layout.pointer_size().bits() < 128,
-        TyKind::Uint(_) => true,
-        _ => false,
+    let hir::Attribute::Unparsed(item) = attr else {
+        return Err(SpecError { span: attr.span(), kind: SpecErrorKind::Args });
     };
-    supported_integer.then(|| context.int_sort())
+    let hir::AttrArgs::Delimited(args) = &item.args else {
+        return Err(SpecError { span: attr.span(), kind: SpecErrorKind::Args });
+    };
+    let span = args.dspan.open.shrink_to_hi().to(args.dspan.close.shrink_to_lo());
+    let text = tcx
+        .sess
+        .source_map()
+        .span_to_snippet(span)
+        .map_err(|_| SpecError { span, kind: SpecErrorKind::Source })?;
+    let node = parse(cx, &text, |name| match bindings.get(name) {
+        Some(Some(binding)) => Ok(*binding),
+        Some(None) => Err(ResolveError::Ambiguous),
+        None => Err(ResolveError::Unknown),
+    })
+    .map_err(|error| SpecError {
+        span: subspan(span, error.range),
+        kind: SpecErrorKind::Parse(error.kind),
+    })?;
+    Ok(Some(Spanned { node, span: attr.span() }))
 }
 
-struct LoopCollector<'tcx> {
+fn subspan(span: Span, range: Range<usize>) -> Span {
+    let lo = span.lo();
+    span.with_lo(lo + BytePos(range.start as u32)).with_hi(lo + BytePos(range.end as u32))
+}
+
+struct LoopCollector<'a, 'tcx> {
+    cx: &'a mut Context,
     tcx: TyCtxt<'tcx>,
-    loops: Vec<(Span, Vec<(Span, String)>)>,
+    bindings: &'a Bindings,
+    loops: Vec<LoopSpec>,
+    error: Option<SpecError>,
 }
 
-impl<'tcx> Visitor<'tcx> for LoopCollector<'tcx> {
-    fn visit_expr(&mut self, expression: &'tcx Expr<'tcx>) {
-        if matches!(expression.kind, hir::ExprKind::Loop(..)) {
-            let attributes = self
+impl<'tcx> Visitor<'tcx> for LoopCollector<'_, 'tcx> {
+    fn visit_expr(&mut self, expr: &'tcx Expr<'tcx>) {
+        if matches!(expr.kind, hir::ExprKind::Loop(..)) {
+            let invariants = self
                 .tcx
-                .hir_attrs(expression.hir_id)
+                .hir_attrs(expr.hir_id)
                 .iter()
-                .filter_map(|attribute| {
-                    self.tcx
-                        .sess
-                        .source_map()
-                        .span_to_snippet(attribute.span())
-                        .ok()
-                        .map(|snippet| (attribute.span(), snippet))
+                .filter_map(|attr| {
+                    clause(self.cx, self.tcx, attr, "invariant", self.bindings).transpose()
                 })
                 .collect();
-            self.loops.push((expression.span, attributes));
+            match invariants {
+                Ok(invariants) => self.loops.push(LoopSpec { invariants }),
+                Err(error) => {
+                    self.error = Some(error);
+                    return;
+                }
+            }
         }
-        intravisit::walk_expr(self, expression);
+        if self.error.is_none() {
+            intravisit::walk_expr(self, expr);
+        }
     }
-}
-
-fn attribute_expression<'a>(snippet: &'a str, name: &str) -> Option<&'a str> {
-    let snippet = snippet.trim();
-    let prefix = format!("#[verifier::{name}(");
-    snippet.strip_prefix(&prefix).and_then(|rest| rest.strip_suffix(")]")).map(str::trim)
 }

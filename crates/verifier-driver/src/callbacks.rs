@@ -1,7 +1,7 @@
 use rustc_driver::{Callbacks, Compilation};
 use rustc_interface::interface::Compiler;
 use rustc_middle::ty::TyCtxt;
-use verifier_rustc::generate_obligations;
+use verifier_rustc::verify;
 
 use crate::report;
 
@@ -14,9 +14,9 @@ impl Callbacks for VerifierCallbacks {
             let body = tcx.mir_drops_elaborated_and_const_checked(owner).borrow();
             let name = tcx.def_path_str(owner.to_def_id());
 
-            match generate_obligations(tcx, owner, &body) {
-                Ok(verification) => report::verify(tcx, &name, &verification),
-                Err(error) => report::failure(tcx, &name, &error),
+            match verify(tcx, owner, &body) {
+                Ok(verification) => report::obligations(tcx, &name, &verification),
+                Err(error) => report::failure(tcx, &name, &body, &error),
             }
         }
 

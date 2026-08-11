@@ -10,7 +10,7 @@ extern crate rustc_index;
 extern crate rustc_middle;
 extern crate rustc_span;
 
-use std::fmt::{Display, Formatter, Result as FormatResult};
+use std::fmt;
 
 use rustc_hir::def_id::LocalDefId;
 use rustc_middle::{mir::Body, ty::TyCtxt};
@@ -18,44 +18,43 @@ use verifier_core::Context;
 
 mod contracts;
 mod engine;
+mod types;
 
-pub use contracts::SpecError;
-pub use engine::{ExecutionError, Limits, Obligation, ObligationKind};
+pub use contracts::{SpecError, SpecErrorKind};
+pub use engine::{ExecutionError, Obligation, ObligationKind};
 
-pub struct FunctionVerification {
-    pub context: Context,
+pub struct Verification {
+    pub cx: Context,
     pub obligations: Vec<Obligation>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum VerificationError {
-    Specification(SpecError),
+pub enum Error {
+    Spec(SpecError),
     Execution(ExecutionError),
 }
 
-impl Display for VerificationError {
-    fn fmt(&self, formatter: &mut Formatter<'_>) -> FormatResult {
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Specification(error) => Display::fmt(error, formatter),
-            Self::Execution(error) => Display::fmt(error, formatter),
+            Self::Spec(error) => error.fmt(f),
+            Self::Execution(error) => error.fmt(f),
         }
     }
 }
 
-impl std::error::Error for VerificationError {}
+impl std::error::Error for Error {}
 
 /// Extracts source-level contracts and generates verification obligations for
 /// one rustc MIR body.
-pub fn generate_obligations<'tcx>(
+pub fn verify<'tcx>(
     tcx: TyCtxt<'tcx>,
     owner: LocalDefId,
     body: &Body<'tcx>,
-) -> Result<FunctionVerification, VerificationError> {
-    let mut context = Context::default();
-    let specification = contracts::collect_function_spec(&mut context, tcx, owner, body)
-        .map_err(VerificationError::Specification)?;
-    let obligations = engine::execute_with_spec(&mut context, tcx, body, &specification)
-        .map_err(VerificationError::Execution)?;
+) -> Result<Verification, Error> {
+    let mut cx = Context::default();
+    let spec = contracts::collect(&mut cx, tcx, owner, body).map_err(Error::Spec)?;
+    let obligations = engine::execute(&mut cx, tcx, body, &spec).map_err(Error::Execution)?;
 
-    Ok(FunctionVerification { context, obligations })
+    Ok(Verification { cx, obligations })
 }
