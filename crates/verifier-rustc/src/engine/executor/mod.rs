@@ -5,7 +5,10 @@ use rustc_middle::{
 };
 use rustc_span::Symbol;
 use smallvec::SmallVec;
-use verifier_core::{Context, Term, contract::instantiate};
+use verifier_core::{
+    Builder, Context, Environment, Name, Term,
+    contract::{Actual, instantiate},
+};
 
 use crate::{
     spec::{Slot, Spec},
@@ -53,6 +56,7 @@ fn entry_loc(block: BasicBlock) -> Location {
 
 struct Executor<'a, 'tcx> {
     cx: &'a mut Context,
+    environment: &'a mut Environment<Name>,
     tcx: TyCtxt<'tcx>,
     body: &'a Body<'tcx>,
     typing_env: TypingEnv<'tcx>,
@@ -67,6 +71,7 @@ struct Executor<'a, 'tcx> {
 /// the obligations induced by its source-level contracts.
 pub(crate) fn execute<'tcx>(
     cx: &mut Context,
+    environment: &mut Environment<Name>,
     tcx: TyCtxt<'tcx>,
     body: &Body<'tcx>,
     spec: &Spec,
@@ -75,6 +80,7 @@ pub(crate) fn execute<'tcx>(
     let loops = LoopAnalysis::new(body, spec).map_err(|error| location.error(error.to_string()))?;
     Executor {
         cx,
+        environment,
         tcx,
         body,
         typing_env: TypingEnv::post_analysis(tcx, body.source.def_id()),
@@ -87,17 +93,26 @@ pub(crate) fn execute<'tcx>(
     .run()
 }
 
-fn conjoin<'a>(cx: &mut Context, terms: impl IntoIterator<Item = &'a Term>) -> Term {
+fn conjoin<'a>(
+    cx: &mut Context,
+    environment: &mut Environment<Name>,
+    terms: impl IntoIterator<Item = &'a Term>,
+) -> Term {
     let mut terms = terms.into_iter().copied();
+    let mut builder = cx.builder(environment);
 
     if let Some(first) = terms.next() {
-        terms.fold(first, |lhs, rhs| cx.and(lhs, rhs))
+        terms.fold(first, |lhs, rhs| builder.and(lhs, rhs))
     } else {
-        cx.bool_lit(true)
+        builder.bool_lit(true)
     }
 }
 
 impl<'a, 'tcx> Executor<'a, 'tcx> {
+    fn build(&mut self) -> Builder<'_, Name> {
+        self.cx.builder(self.environment)
+    }
+
     fn add_integer_range_facts(
         &mut self,
         ty: Ty<'tcx>,
@@ -105,10 +120,10 @@ impl<'a, 'tcx> Executor<'a, 'tcx> {
         facts: &mut SmallVec<[Term; 8]>,
     ) {
         let Some(bounds) = integer_layout(self.tcx, ty).and_then(integer_bounds) else { return };
-        let minimum = self.cx.int_lit(bounds.0);
-        let maximum = self.cx.int_lit(bounds.1);
-        facts.push(self.cx.ge(term, minimum));
-        facts.push(self.cx.le(term, maximum));
+        let minimum = self.build().int_lit(bounds.0);
+        let maximum = self.build().int_lit(bounds.1);
+        facts.push(self.build().ge(term, minimum));
+        facts.push(self.build().le(term, maximum));
     }
 
     fn run(mut self) -> Result<Vec<Obligation>, ExecutionError> {
@@ -143,19 +158,20 @@ impl<'a, 'tcx> Executor<'a, 'tcx> {
             let Some(sort) = self.cx.sort(self.tcx, ty) else {
                 return Err(location.error(format!("argument {index} has unsupported type `{ty}`")));
             };
-            let symbol = match self.argument_name(local, index) {
-                Some(name) => self.cx.symbol(name.as_str(), sort),
-                None => self.cx.symbol(&format!("arg{index}"), sort),
+            let name = match self.argument_name(local, index) {
+                Some(name) => self.cx.name(name.as_str()),
+                None => self.cx.name(&format!("arg{index}")),
             };
-            let term = self.cx.sym(symbol);
+            let var = self.environment.bind_value(sort, name);
+            let term = self.build().var(var);
             self.entry[local] = Some(term);
             store[local] = Some(term);
             self.add_integer_range_facts(ty, term, &mut facts);
         }
 
         for clause in &self.spec.requires {
-            let term = instantiate(self.cx, &clause.node, |slot| match slot {
-                Slot::Local(local) => store[local],
+            let term = instantiate(self.cx, &clause.node, self.environment, |slot| match slot {
+                Slot::Local(local) => store[local].map(Actual::Value),
                 Slot::Result => None,
             })
             .map_err(|message| location.error(format!("invalid precondition: {message}")))?;
@@ -184,20 +200,22 @@ impl<'a, 'tcx> Executor<'a, 'tcx> {
 
 #[cfg(test)]
 mod tests {
-    use verifier_core::{Context, DefStore, Op, TermKind};
+    use verifier_core::{Context, DefStore, Environment, Op, TermKind};
 
     #[test]
     fn assertion_vc_is_guarded_by_its_path_condition() {
         let mut cx = Context::default();
         let bool_sort = cx.bool_sort();
-        let path_symbol = cx.symbol("path", bool_sort);
-        let assertion_symbol = cx.symbol("assertion", bool_sort);
-        let path = cx.sym(path_symbol);
-        let assertion = cx.sym(assertion_symbol);
-        let vc = cx.implies(path, assertion);
+        let mut environment = Environment::new();
+        let path_var = environment.bind_value(bool_sort, "path");
+        let assertion_var = environment.bind_value(bool_sort, "assertion");
+        let mut terms = cx.builder(&mut environment);
+        let path = terms.var(path_var);
+        let assertion = terms.var(assertion_var);
+        let vc = terms.implies(path, assertion);
 
         assert_eq!(
-            cx.get(vc).kind,
+            terms.context().get(vc).kind,
             TermKind::Binary { op: Op::Implies, lhs: path, rhs: assertion }
         );
     }

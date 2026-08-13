@@ -69,6 +69,7 @@ name = "verifier-core"
 version = "0.1.0"
 dependencies = [
  "fixedbitset",
+ "hashbrown",
  "index_vec",
  "interner",
  "smallvec",

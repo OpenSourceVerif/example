@@ -1,16 +1,10 @@
-use crate::{Name, Sort, SortDef, Sym, SymDef, Term, TermDef};
-use index_vec::IndexVec;
+use crate::{Name, Sort, SortDef, Term, TermDef};
 
-mod builders;
 mod storage;
 
-use storage::{SortDefStored, SymDefStored, TermDefStored};
+use storage::{SortDefStored, TermDefStored};
 
 use interner::{ListInterner, StringInterner, StructInterner};
-
-pub trait Intern<I, D> {
-    fn intern(&mut self, def: D) -> I;
-}
 
 pub trait DefStore<I> {
     type Ref<'a>
@@ -21,38 +15,26 @@ pub trait DefStore<I> {
 }
 
 #[derive(Default)]
+/// Interned term syntax, sorts, lists, and names shared by multiple environments.
 pub struct Context {
     terms: StructInterner<Term, TermDefStored>,
     term_lists: ListInterner<Term>,
     names: StringInterner<Name>,
-    syms: IndexVec<Sym, SymDefStored>,
     sorts: StructInterner<Sort, SortDefStored>,
     sort_lists: ListInterner<Sort>,
 }
 
 impl Context {
-    /// declare a fresh symbol.
-    pub fn symbol(&mut self, name: &str, sort: Sort) -> Sym {
-        let name = self.names.intern(name);
-        self.syms.push(SymDefStored { name, sort })
+    pub fn name(&mut self, name: &str) -> Name {
+        self.names.intern(name)
     }
 
-    pub fn syms(&self) -> impl Iterator<Item = (Sym, SymDef<'_>)> {
-        self.syms.iter_enumerated().map(|(sym, SymDefStored { name, sort })| {
-            let name = &self.names[*name];
-
-            (sym, SymDef { name, sort: *sort })
-        })
-    }
-
-    pub(crate) fn sorts(&self) -> impl Iterator<Item = (Sort, SortDef<'_>)> {
-        self.sorts.iter_enumerated().map(|(sort, def)| (sort, def.borrow(&self.sort_lists)))
-    }
-}
-
-impl Intern<Term, TermDef<'_>> for Context {
-    fn intern(&mut self, term: TermDef<'_>) -> Term {
+    pub(crate) fn intern_term(&mut self, term: TermDef<'_>) -> Term {
         self.terms.intern(TermDefStored::store(term, &mut self.term_lists))
+    }
+
+    pub(crate) fn intern_sort(&mut self, sort: SortDef<'_>) -> Sort {
+        self.sorts.intern(SortDefStored::store(sort, &mut self.sort_lists))
     }
 }
 
@@ -67,12 +49,6 @@ impl DefStore<Term> for Context {
     }
 }
 
-impl Intern<Sort, SortDef<'_>> for Context {
-    fn intern(&mut self, sort: SortDef<'_>) -> Sort {
-        self.sorts.intern(SortDefStored::store(sort, &mut self.sort_lists))
-    }
-}
-
 impl DefStore<Sort> for Context {
     type Ref<'a>
         = SortDef<'a>
@@ -84,61 +60,69 @@ impl DefStore<Sort> for Context {
     }
 }
 
-impl DefStore<Sym> for Context {
+impl DefStore<Name> for Context {
     type Ref<'a>
-        = SymDef<'a>
+        = &'a str
     where
         Self: 'a;
 
-    fn get(&self, sym: Sym) -> SymDef<'_> {
-        let SymDefStored { name, sort } = self.syms[sym];
-        SymDef { name: &self.names[name], sort }
+    fn get(&self, name: Name) -> &str {
+        &self.names[name]
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{Context, DefStore};
-    use crate::{Field, Fields, SortDef, Sym, TermKind};
+    use crate::{Environment, Field, Fields, SortDef, TermKind};
 
     #[test]
-    fn interns_terms_and_allocates_symbols() {
+    fn interns_terms_and_allocates_variables() {
         let mut context = Context::default();
 
         let int = context.int_sort();
         let same_int = context.int_sort();
+        let pair = context.tuple_sort(&[int, int]);
         assert_eq!(same_int, int);
 
-        let x: Sym = context.symbol("x", int);
-        let other_x: Sym = context.symbol("x", int);
+        let mut environment = Environment::new();
+        let x = environment.bind_value(int, "x");
+        let other_x = environment.bind_value(int, "x");
         assert_ne!(other_x, x);
 
-        let x_expr = context.sym(x);
-        let same_x_expr = context.sym(x);
+        let mut terms = context.builder(&mut environment);
+        let x_expr = terms.var(x);
+        let same_x_expr = terms.var(x);
         assert_eq!(same_x_expr, x_expr);
-        assert_ne!(context.sym(other_x), x_expr);
+        assert_ne!(terms.var(other_x), x_expr);
 
-        let tuple = context.tuple(&[x_expr, same_x_expr]);
-        let same_tuple = context.tuple(&[same_x_expr, x_expr]);
+        let tuple = terms.tuple(&[x_expr, same_x_expr]);
+        let same_tuple = terms.tuple(&[same_x_expr, x_expr]);
         assert_eq!(same_tuple, tuple);
-        assert_eq!(context.get(tuple).kind, TermKind::Tuple(Fields::new(&[x_expr, x_expr])));
-        assert_eq!(context.get(tuple).sort, context.tuple_sort(&[int, int]));
-
-        assert_eq!(context.syms().count(), 2);
+        assert_eq!(
+            terms.context().get(tuple).kind,
+            TermKind::Tuple(Fields::new(&[x_expr, x_expr]))
+        );
+        assert_eq!(terms.term_sort(tuple), pair);
     }
 
     #[test]
-    fn parameters_are_sorted() {
+    fn variables_are_sorted_by_their_environment() {
         let mut context = Context::default();
         let int = context.int_sort();
         let bool = context.bool_sort();
 
-        let int_param = context.param(0, int);
-        let bool_param = context.param(0, bool);
+        let mut ints = Environment::new();
+        let int_var = ints.bind_value(int, ());
+        let int_term = context.builder(&mut ints).var(int_var);
 
-        assert_ne!(int_param, bool_param);
-        assert_eq!(context.get(int_param).sort, int);
-        assert_eq!(context.get(bool_param).sort, bool);
+        let mut bools = Environment::new();
+        let bool_var = bools.bind_value(bool, ());
+        let bool_term = context.builder(&mut bools).var(bool_var);
+
+        assert_eq!(int_term, bool_term);
+        assert_eq!(context.builder(&mut ints).term_sort(int_term), int);
+        assert_eq!(context.builder(&mut bools).term_sort(bool_term), bool);
     }
 
     #[test]
@@ -147,26 +131,28 @@ mod tests {
         let int = context.int_sort();
         let bool = context.bool_sort();
         let tuple_sort = context.tuple_sort(&[int, bool]);
-        let tuple_sym = context.symbol("pair", tuple_sort);
-        let tuple_sym = context.sym(tuple_sym);
+        let unit_sort = context.unit_sort();
+        let mut environment = Environment::new();
+        let tuple_var = environment.bind_value(tuple_sort, "pair");
+        let mut terms = context.builder(&mut environment);
+        let tuple_sym = terms.var(tuple_var);
 
         let second = Field::from(1);
-        let symbolic_field = context.proj(tuple_sym, second);
-        assert_eq!(context.get(symbolic_field).sort, bool);
+        let symbolic_field = terms.proj(tuple_sym, second);
+        assert_eq!(terms.term_sort(symbolic_field), bool);
         assert_eq!(
-            context.get(symbolic_field).kind,
+            terms.context().get(symbolic_field).kind,
             TermKind::Proj { tuple: tuple_sym, field: second }
         );
 
-        let one = context.int_lit(1);
-        let yes = context.bool_lit(true);
-        let tuple = context.tuple(&[one, yes]);
-        assert_eq!(context.proj(tuple, Field::from(0)), one);
-        assert_eq!(context.proj(tuple, second), yes);
-        let unit = context.unit();
-        let unit_sort = context.unit_sort();
-        assert_eq!(context.get(unit).sort, unit_sort);
-        assert_eq!(context.tuple(&[]), unit);
-        assert_eq!(context.get(tuple_sort), SortDef::Tuple(Fields::new(&[int, bool])));
+        let one = terms.int_lit(1);
+        let yes = terms.bool_lit(true);
+        let tuple = terms.tuple(&[one, yes]);
+        assert_eq!(terms.proj(tuple, Field::from(0)), one);
+        assert_eq!(terms.proj(tuple, second), yes);
+        let unit = terms.unit();
+        assert_eq!(terms.term_sort(unit), unit_sort);
+        assert_eq!(terms.tuple(&[]), unit);
+        assert_eq!(terms.context().get(tuple_sort), SortDef::Tuple(Fields::new(&[int, bool])));
     }
 }

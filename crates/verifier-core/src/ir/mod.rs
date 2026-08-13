@@ -1,11 +1,14 @@
-//! Interned symbolic term, symbol, and sort definitions.
+//! Interned symbolic term and sort definitions.
 
 use index_vec::{IndexSlice, define_index_type};
 
 mod fields;
 
 define_index_type! { pub struct Term = u32; }
-define_index_type! { pub struct Sym = u32; }
+define_index_type! {
+    /// A stable index into an append-only [`crate::Environment`].
+    pub struct Var = u32;
+}
 define_index_type! { pub struct Sort = u32; }
 define_index_type! { pub struct Name = u32; }
 define_index_type! { pub struct Field = u32; }
@@ -37,28 +40,20 @@ pub enum Uop {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TermKind<'c> {
-    Param(u32),
-    Sym(Sym),
+    Var(Var),
     Const(i128),
     Bool(bool),
     Unit,
     Binary { op: Op, lhs: Term, rhs: Term },
     Unary { op: Uop, expr: Term },
-    Call { func: Sym, arg: Term },
+    Call { function: Var, arguments: Fields<'c, Term> },
     Tuple(Fields<'c, Term>),
     Proj { tuple: Term, field: Field },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TermDef<'c> {
-    pub sort: Sort,
     pub kind: TermKind<'c>,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct SymDef<'c> {
-    pub name: &'c str,
-    pub sort: Sort,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -66,5 +61,4 @@ pub enum SortDef<'c> {
     Int,
     Bool,
     Tuple(Fields<'c, Sort>),
-    Arrow(Sort, Sort),
 }

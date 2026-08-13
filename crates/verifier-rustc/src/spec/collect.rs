@@ -5,9 +5,12 @@ use hir::Attribute::Unparsed;
 use hir::def_id::LocalDefId;
 use hir::{Attribute, Expr};
 use rustc_ast::token::Delimiter;
-use rustc_hir::{self as hir, intravisit::{self, Visitor}};
+use rustc_hir::{
+    self as hir,
+    intravisit::{self, Visitor},
+};
 use rustc_middle::{
-    mir::{Body, RETURN_PLACE, VarDebugInfoContents, VarDebugInfo},
+    mir::{Body, RETURN_PLACE, VarDebugInfo, VarDebugInfoContents},
     ty::TyCtxt,
 };
 use rustc_span::{BytePos, Span, Spanned, Symbol};

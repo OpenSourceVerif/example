@@ -1,8 +1,6 @@
 use std::{fmt, ops::Range};
 
-use smallvec::SmallVec;
-
-use crate::{Context, DefStore, Op, Sort, SortDef, Term};
+use crate::{Context, DefStore, Environment, Op, Sort, SortDef, Term};
 
 use super::Clause;
 
@@ -28,6 +26,7 @@ pub enum ParseErrorKind {
     IntOverflow,
     Unknown(String),
     Ambiguous(String),
+    Inconsistent(String),
     Expected(Expected),
     TooManyBindings,
 }
@@ -54,6 +53,9 @@ impl fmt::Display for ParseErrorKind {
             Kind::IntOverflow => f.write_str("integer literal is outside the i128 range"),
             Kind::Unknown(name) => write!(f, "unknown variable `{name}`"),
             Kind::Ambiguous(name) => write!(f, "variable `{name}` is ambiguous"),
+            Kind::Inconsistent(name) => {
+                write!(f, "variable `{name}` resolves to inconsistent sorts")
+            }
             Kind::Expected(Want::Term) => f.write_str("expected a term"),
             Kind::Expected(Want::RParen) => f.write_str("expected `)`"),
             Kind::Expected(Want::End) => f.write_str("expected the end of the clause"),
@@ -193,7 +195,7 @@ struct Parser<'a, 'c, B, F> {
     lexer: Lexer<'a>,
     current: Lexed<'a>,
     resolve: F,
-    bindings: SmallVec<[B; 4]>,
+    environment: Environment<B>,
 }
 
 pub fn parse<B, F>(cx: &mut Context, text: &str, resolve: F) -> Result<Clause<B>, ParseError>
@@ -203,7 +205,7 @@ where
 {
     let mut lexer = Lexer { text, pos: 0 };
     let current = lexer.next()?;
-    Parser { cx, lexer, current, resolve, bindings: SmallVec::new() }.parse()
+    Parser { cx, lexer, current, resolve, environment: Environment::new() }.parse()
 }
 
 impl<B, F> Parser<'_, '_, B, F>
@@ -217,7 +219,7 @@ where
             return self.error(Expected::End);
         }
         self.require(term, SortDef::Bool)?;
-        Ok(Clause { term, bindings: self.bindings })
+        Ok(Clause { term, environment: self.environment })
     }
 
     fn implies(&mut self) -> Result<Term, ParseError> {
@@ -226,7 +228,7 @@ where
             self.require(lhs, SortDef::Bool)?;
             let rhs = self.implies()?;
             self.require(rhs, SortDef::Bool)?;
-            Ok(self.cx.implies(lhs, rhs))
+            Ok(self.build().implies(lhs, rhs))
         } else {
             Ok(lhs)
         }
@@ -238,7 +240,7 @@ where
             self.require(lhs, SortDef::Bool)?;
             let rhs = self.and()?;
             self.require(rhs, SortDef::Bool)?;
-            lhs = self.cx.or(lhs, rhs);
+            lhs = self.build().or(lhs, rhs);
         }
         Ok(lhs)
     }
@@ -249,7 +251,7 @@ where
             self.require(lhs, SortDef::Bool)?;
             let rhs = self.comparison()?;
             self.require(rhs, SortDef::Bool)?;
-            lhs = self.cx.and(lhs, rhs);
+            lhs = self.build().and(lhs, rhs);
         }
         Ok(lhs)
     }
@@ -267,13 +269,13 @@ where
         };
         self.bump()?;
         let rhs = self.additive()?;
-        if self.cx.term_sort(lhs) != self.cx.term_sort(rhs) {
+        if self.term_sort(lhs) != self.term_sort(rhs) {
             return self.error(Expected::SameSort);
         }
         if !matches!(op, Op::Eq | Op::Ne) {
             self.require(lhs, SortDef::Int)?;
         }
-        Ok(self.cx.binary(op, lhs, rhs))
+        Ok(self.build().binary(op, lhs, rhs))
     }
 
     fn additive(&mut self) -> Result<Term, ParseError> {
@@ -288,7 +290,7 @@ where
             self.require(lhs, SortDef::Int)?;
             let rhs = self.multiplicative()?;
             self.require(rhs, SortDef::Int)?;
-            lhs = self.cx.binary(op, lhs, rhs);
+            lhs = self.build().binary(op, lhs, rhs);
         }
     }
 
@@ -298,7 +300,7 @@ where
             self.require(lhs, SortDef::Int)?;
             let rhs = self.unary()?;
             self.require(rhs, SortDef::Int)?;
-            lhs = self.cx.mul(lhs, rhs);
+            lhs = self.build().mul(lhs, rhs);
         }
         Ok(lhs)
     }
@@ -307,12 +309,12 @@ where
         if self.take(Token::Bang)? {
             let term = self.unary()?;
             self.require(term, SortDef::Bool)?;
-            return Ok(self.cx.not(term));
+            return Ok(self.build().not(term));
         }
         if self.take(Token::Minus)? {
             let term = self.unary()?;
             self.require(term, SortDef::Int)?;
-            return Ok(self.cx.neg(term));
+            return Ok(self.build().neg(term));
         }
         self.atom()
     }
@@ -322,11 +324,11 @@ where
         match token {
             Token::Int(value) => {
                 self.bump()?;
-                Ok(self.cx.int_lit(value))
+                Ok(self.build().int_lit(value))
             }
             Token::True | Token::False => {
                 self.bump()?;
-                Ok(self.cx.bool_lit(token == Token::True))
+                Ok(self.build().bool_lit(token == Token::True))
             }
             Token::Ident(name) => {
                 self.bump()?;
@@ -337,17 +339,30 @@ where
                         ResolveError::Ambiguous => ParseErrorKind::Ambiguous(name.to_owned()),
                     },
                 })?;
-                let param = match self.bindings.iter().position(|bound| *bound == binding) {
-                    Some(param) => param,
+                let existing = self
+                    .environment
+                    .iter()
+                    .find(|(_, _, bound)| **bound == binding)
+                    .map(|(var, declaration, _)| (var, declaration.clone()));
+                let var = match existing {
+                    Some((var, crate::Declaration::Value(previous))) if previous == sort => var,
+                    Some(_) => {
+                        return Err(ParseError {
+                            range,
+                            kind: ParseErrorKind::Inconsistent(name.to_owned()),
+                        });
+                    }
                     None => {
-                        let param = self.bindings.len();
-                        self.bindings.push(binding);
-                        param
+                        if self.environment.len() == u32::MAX as usize {
+                            return Err(ParseError {
+                                range,
+                                kind: ParseErrorKind::TooManyBindings,
+                            });
+                        }
+                        self.environment.bind_value(sort, binding)
                     }
                 };
-                let param = u32::try_from(param)
-                    .map_err(|_| ParseError { range, kind: ParseErrorKind::TooManyBindings })?;
-                Ok(self.cx.param(param, sort))
+                Ok(self.build().var(var))
             }
             Token::LParen => {
                 self.bump()?;
@@ -375,16 +390,25 @@ where
         }
     }
 
-    fn require(&self, term: Term, expected: SortDef<'_>) -> Result<(), ParseError> {
-        if self.cx.get(self.cx.term_sort(term)) == expected {
+    fn require(&mut self, term: Term, expected: SortDef<'_>) -> Result<(), ParseError> {
+        let sort = self.term_sort(term);
+        if self.cx.get(sort) == expected {
             Ok(())
         } else {
             self.error(match expected {
                 SortDef::Bool => Expected::Bool,
                 SortDef::Int => Expected::Int,
-                SortDef::Tuple(_) | SortDef::Arrow(_, _) => unreachable!(),
+                SortDef::Tuple(_) => unreachable!(),
             })
         }
+    }
+
+    fn build(&mut self) -> crate::Builder<'_, B> {
+        self.cx.builder(&mut self.environment)
+    }
+
+    fn term_sort(&mut self, term: Term) -> Sort {
+        self.build().term_sort(term)
     }
 
     fn take(&mut self, token: Token<'_>) -> Result<bool, ParseError> {
@@ -426,7 +450,10 @@ mod tests {
         .unwrap();
 
         assert!(matches!(cx.get(clause.term).kind, TermKind::Binary { op: Op::Implies, .. }));
-        assert_eq!(clause.bindings.as_slice(), &[1, 2]);
+        assert_eq!(
+            clause.environment.iter().map(|(_, _, binding)| *binding).collect::<Vec<_>>(),
+            [1, 2]
+        );
     }
 
     #[test]
@@ -437,7 +464,7 @@ mod tests {
         let value = parse(&mut cx, "value >= 0", |_| Ok((int, 2))).unwrap();
 
         assert_eq!(value.term, x.term);
-        assert_ne!(value.bindings, x.bindings);
+        assert_ne!(value.environment, x.environment);
     }
 
     #[test]
@@ -448,5 +475,21 @@ mod tests {
 
         assert_eq!(error.range, 0..7);
         assert_eq!(error.kind, ParseErrorKind::Unknown("missing".to_owned()));
+    }
+
+    #[test]
+    fn rejects_one_binding_at_two_sorts() {
+        let mut cx = Context::default();
+        let int = cx.int_sort();
+        let bool = cx.bool_sort();
+        let error = parse(&mut cx, "x == y", |name| match name {
+            "x" => Ok((int, 1)),
+            "y" => Ok((bool, 1)),
+            _ => Err(ResolveError::Unknown),
+        })
+        .unwrap_err();
+
+        assert_eq!(error.range, 5..6);
+        assert_eq!(error.kind, ParseErrorKind::Inconsistent("y".to_owned()));
     }
 }

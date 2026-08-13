@@ -1,4 +1,7 @@
-use std::{error::Error, fmt::{self, Display, Formatter}};
+use std::{
+    error::Error,
+    fmt::{self, Display, Formatter},
+};
 
 use rustc_middle::mir::Local;
 use rustc_span::{Span, Spanned};

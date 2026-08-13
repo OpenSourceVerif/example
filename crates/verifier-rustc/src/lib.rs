@@ -15,7 +15,7 @@ use std::fmt;
 
 use rustc_hir::def_id::LocalDefId;
 use rustc_middle::{mir::Body, ty::TyCtxt};
-use verifier_core::Context;
+use verifier_core::{Context, Environment, Name};
 
 mod engine;
 mod spec;
@@ -26,6 +26,7 @@ pub use spec::{SpecError, SpecErrorKind};
 
 pub struct Verification {
     pub cx: Context,
+    pub environment: Environment<Name>,
     pub obligations: Vec<Obligation>,
 }
 
@@ -55,7 +56,9 @@ pub fn verify<'tcx>(
 ) -> Result<Verification, Error> {
     let mut cx = Context::default();
     let spec = spec::collect(&mut cx, tcx, owner, body).map_err(Error::Spec)?;
-    let obligations = engine::execute(&mut cx, tcx, body, &spec).map_err(Error::Execution)?;
+    let mut environment = Environment::new();
+    let obligations =
+        engine::execute(&mut cx, &mut environment, tcx, body, &spec).map_err(Error::Execution)?;
 
-    Ok(Verification { cx, obligations })
+    Ok(Verification { cx, environment, obligations })
 }

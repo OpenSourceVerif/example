@@ -6,7 +6,7 @@ use crate::solver;
 
 pub(crate) fn obligations(tcx: TyCtxt<'_>, name: &str, verification: &Verification) {
     for (index, obligation) in verification.obligations.iter().enumerate() {
-        let script = smt(&verification.cx, obligation.condition);
+        let script = smt(&verification.cx, &verification.environment, obligation.condition);
         match solver::check(&script) {
             Ok(None) => {}
             Ok(Some(model)) => {
