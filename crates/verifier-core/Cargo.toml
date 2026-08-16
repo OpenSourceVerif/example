@@ -6,8 +6,8 @@ publish = false
 
 [dependencies]
 fixedbitset = { workspace = true }
-generative-scoped-tls = { workspace = true }
+bumpalo = { workspace = true }
 hashbrown = { workspace = true }
 index_vec = { workspace = true }
+scoped-tls = { workspace = true }
 smallvec = { workspace = true }
-interner = { workspace = true }

@@ -187,29 +187,24 @@ impl<'a, 'tcx> Executor<'a, 'tcx> {
 
 #[cfg(test)]
 mod tests {
-    use verifier_core::{
-        DefStore, Environment, INTERNERS, Intern, Op, SortDef, TermDef, scope, scoped,
-    };
+    use verifier_core::{Environment, INTERNERS, Intern, Interners, Op, SortDef, TermDef, def};
 
     #[test]
     fn assertion_vc_is_guarded_by_its_path_condition() {
-        // SAFETY: this test is synchronous.
-        unsafe {
-            scope(|| {
-                let bool_sort = SortDef::Bool.intern();
-                let mut environment = Environment::new();
-                let path_var = environment.bind_value(bool_sort, "path");
-                let assertion_var = environment.bind_value(bool_sort, "assertion");
-                let path = environment.var(path_var);
-                let assertion = environment.var(assertion_var);
-                let vc = environment.implies(path, assertion);
+        let interners = Interners::default();
+        let body = || {
+            let bool_sort = SortDef::Bool.intern();
+            let mut environment = Environment::new();
+            let path_var = environment.bind_value(bool_sort, "path");
+            let assertion_var = environment.bind_value(bool_sort, "assertion");
+            let path = environment.var(path_var);
+            let assertion = environment.var(assertion_var);
+            let vc = environment.implies(path, assertion);
 
-                scoped!(let interners = INTERNERS);
-                assert_eq!(
-                    interners.borrow().get(vc),
-                    TermDef::Binary { op: Op::Implies, lhs: path, rhs: assertion }
-                );
-            })
-        }
+            def!(let definition = vc);
+            assert_eq!(definition, &TermDef::Binary { op: Op::Implies, lhs: path, rhs: assertion });
+        };
+        // SAFETY: `body` is synchronous and discards every arena value.
+        unsafe { INTERNERS.set(&interners, body) }
     }
 }

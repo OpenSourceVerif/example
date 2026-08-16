@@ -1,9 +1,9 @@
 [workspace]
 members = [
-    "crates/interner",
+    "crates/scoped-tls",
     "crates/verifier-core",
     "crates/verifier-driver",
-    "crates/verifier-rustc", "play",
+    "crates/verifier-rustc",
 ]
 resolver = "3"
 
@@ -17,7 +17,7 @@ hashbrown = "0.17.1"
 index_vec = "0.1.4"
 smallvec = { version = "1", features = ["const_generics"] }
 fixedbitset = "0.5.7"
-generative-scoped-tls = { git = "https://github.com/sssxks/generative-scoped-tls", rev = "3c7796dffb0671fc646420e2be646c58965b9710" }
 interner = { path = "crates/interner" }
+scoped-tls = { path = "crates/scoped-tls" }
 verifier-core = { path = "crates/verifier-core" }
 verifier-rustc = { path = "crates/verifier-rustc" }

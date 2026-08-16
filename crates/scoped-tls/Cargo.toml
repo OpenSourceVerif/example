@@ -1,6 +1,8 @@
 [package]
-name = "play"
+name = "scoped-tls"
 version.workspace = true
 edition.workspace = true
+publish = false
 
-[dependencies]
+[lib]
+doctest = true

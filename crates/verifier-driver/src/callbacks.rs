@@ -1,7 +1,7 @@
 use rustc_driver::{Callbacks, Compilation};
 use rustc_interface::interface::Compiler;
 use rustc_middle::ty::TyCtxt;
-use verifier_core::scope;
+use verifier_core::{INTERNERS, Interners};
 use verifier_rustc::verify;
 
 use crate::report;
@@ -23,10 +23,12 @@ impl Callbacks for VerifierCallbacks {
             }
         };
 
+        let interners = Interners::default();
+        assert!(!INTERNERS.is_set(), "nested verifier interner binding");
         // SAFETY: rustc's analysis callback and every verifier call above are synchronous. No
-        // future or coroutine can suspend with an interner reference, and this is the sole scope
-        // installed by the driver.
-        unsafe { scope(verify_crate) };
+        // future or coroutine can suspend with an interner reference, no identity handle escapes,
+        // and this is the sole binding installed by the driver.
+        unsafe { INTERNERS.set(&interners, verify_crate) };
 
         Compilation::Stop
     }

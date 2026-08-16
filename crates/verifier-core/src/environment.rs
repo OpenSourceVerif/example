@@ -6,7 +6,7 @@ use smallvec::SmallVec;
 
 use crate::{
     Declaration::{Function, Value},
-    DefStore, Field, Fields, INTERNERS, Intern, Op, Sort, SortDef, Term, TermDef, Uop, Var, scoped,
+    Field, Fields, Intern, Op, Sort, SortDef, Term, TermDef, Uop, Var, def,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -125,26 +125,29 @@ impl<B> Environment<B> {
             return Ok(sort);
         }
 
-        let sort = match owned_term(term) {
-            OwnedTerm::Var(var) => match self.get(var).map(|entry| entry.0) {
+        def!(let definition = term);
+        let sort = match *definition {
+            TermDef::Var(var) => match self.get(var).map(|entry| entry.0) {
                 Some(Value(sort)) => *sort,
                 Some(Function { .. }) => return Err(TypeError::FunctionAsValue(var)),
                 None => return Err(TypeError::UnknownVariable(var)),
             },
-            OwnedTerm::Const => int_sort(),
-            OwnedTerm::Bool => bool_sort(),
-            OwnedTerm::Unit => unit_sort(),
-            OwnedTerm::Binary { op, lhs, rhs } => self.binary_sort(op, lhs, rhs)?,
-            OwnedTerm::Unary { op, expr } => self.unary_sort(op, expr)?,
-            OwnedTerm::Call { function, arguments } => self.call_sort(function, &arguments)?,
-            OwnedTerm::Tuple(fields) => {
+            TermDef::Const(_) => int_sort(),
+            TermDef::Bool(_) => bool_sort(),
+            TermDef::Unit => unit_sort(),
+            TermDef::Binary { op, lhs, rhs } => self.binary_sort(op, lhs, rhs)?,
+            TermDef::Unary { op, expr } => self.unary_sort(op, expr)?,
+            TermDef::Call { function, arguments } => {
+                self.call_sort(function, arguments.as_ref())?
+            }
+            TermDef::Tuple(fields) => {
                 let sorts = fields
                     .iter()
                     .map(|field| self.sort(*field))
                     .collect::<Result<SmallVec<[_; 4]>, _>>()?;
                 tuple_sort(&sorts)
             }
-            OwnedTerm::Proj { tuple, field } => self.projection_sort(tuple, field)?,
+            TermDef::Proj { tuple, field } => self.projection_sort(tuple, field)?,
         };
         self.remember(term, sort);
         Ok(sort)
@@ -189,7 +192,8 @@ impl<B> Environment<B> {
 
     pub fn proj(&self, tuple: Term, field: impl Into<Field>) -> Term {
         let field = field.into();
-        if let OwnedTerm::Tuple(fields) = owned_term(tuple) {
+        def!(let definition = tuple);
+        if let TermDef::Tuple(fields) = *definition {
             return fields[field.index()];
         }
         let sort = self.projection_sort(tuple, field).expect("checked tuple projection");
@@ -198,8 +202,9 @@ impl<B> Environment<B> {
 
     fn projection_sort(&self, tuple: Term, field: Field) -> Result<Sort, TypeError> {
         let tuple = self.sort(tuple)?;
-        match owned_sort(tuple) {
-            OwnedSort::Tuple(fields) => fields
+        def!(let definition = tuple);
+        match *definition {
+            SortDef::Tuple(fields) => fields
                 .get(field.index())
                 .copied()
                 .ok_or(TypeError::MissingField { sort: tuple, field }),
@@ -369,50 +374,4 @@ fn tuple_sort(fields: &[Sort]) -> Sort {
 
 fn expect(actual: Sort, expected: Sort) -> Result<(), TypeError> {
     if actual == expected { Ok(()) } else { Err(TypeError::Sort { expected, actual }) }
-}
-
-enum OwnedTerm {
-    Var(Var),
-    Const,
-    Bool,
-    Unit,
-    Binary { op: Op, lhs: Term, rhs: Term },
-    Unary { op: Uop, expr: Term },
-    Call { function: Var, arguments: SmallVec<[Term; 4]> },
-    Tuple(SmallVec<[Term; 4]>),
-    Proj { tuple: Term, field: Field },
-}
-
-fn owned_term(term: Term) -> OwnedTerm {
-    scoped!(let interners = INTERNERS);
-    let interners = interners.borrow();
-    match interners.get(term) {
-        TermDef::Var(var) => OwnedTerm::Var(var),
-        TermDef::Const(_) => OwnedTerm::Const,
-        TermDef::Bool(_) => OwnedTerm::Bool,
-        TermDef::Unit => OwnedTerm::Unit,
-        TermDef::Binary { op, lhs, rhs } => OwnedTerm::Binary { op, lhs, rhs },
-        TermDef::Unary { op, expr } => OwnedTerm::Unary { op, expr },
-        TermDef::Call { function, arguments } => {
-            OwnedTerm::Call { function, arguments: arguments.into() }
-        }
-        TermDef::Tuple(fields) => OwnedTerm::Tuple(fields.into()),
-        TermDef::Proj { tuple, field } => OwnedTerm::Proj { tuple, field },
-    }
-}
-
-enum OwnedSort {
-    Int,
-    Bool,
-    Tuple(SmallVec<[Sort; 4]>),
-}
-
-fn owned_sort(sort: Sort) -> OwnedSort {
-    scoped!(let interners = INTERNERS);
-    let interners = interners.borrow();
-    match interners.get(sort) {
-        SortDef::Int => OwnedSort::Int,
-        SortDef::Bool => OwnedSort::Bool,
-        SortDef::Tuple(fields) => OwnedSort::Tuple(fields.into()),
-    }
 }

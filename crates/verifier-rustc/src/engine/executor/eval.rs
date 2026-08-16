@@ -7,7 +7,7 @@ use rustc_middle::{
     ty::Ty,
 };
 use smallvec::SmallVec;
-use verifier_core::{DefStore, Environment, Field, INTERNERS, Name, Op, SortDef, Term, scoped};
+use verifier_core::{Environment, Field, Name, Op, SortDef, Term, def};
 
 use crate::{
     engine::obligation::{ExecutionError, LocationExt},
@@ -44,9 +44,8 @@ impl<'a, 'tcx> Executor<'a, 'tcx> {
             let sort =
                 self.environment.sort(value).map_err(|error| location.error(error.to_string()))?;
             let fields = {
-                scoped!(let interners = INTERNERS);
-                let interners = interners.borrow();
-                let SortDef::Tuple(fields) = interners.get(sort) else {
+                def!(let definition = sort);
+                let SortDef::Tuple(fields) = *definition else {
                     return Err(location.error("field projection from non-tuple term"));
                 };
                 fields.len()
@@ -324,9 +323,8 @@ fn write_projection(
     };
     let root_sort = environment.sort(root).map_err(|error| location.error(error.to_string()))?;
     let field_count = {
-        scoped!(let interners = INTERNERS);
-        let interners = interners.borrow();
-        let SortDef::Tuple(field_sorts) = interners.get(root_sort) else {
+        def!(let definition = root_sort);
+        let SortDef::Tuple(field_sorts) = *definition else {
             return Err(location.error("field projection from non-tuple term"));
         };
         field_sorts.len()

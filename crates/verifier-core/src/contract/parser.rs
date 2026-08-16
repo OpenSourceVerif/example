@@ -1,6 +1,6 @@
 use std::{fmt, ops::Range};
 
-use crate::{DefStore, Environment, INTERNERS, Op, Sort, SortDef, Term, scoped};
+use crate::{Environment, Op, Sort, SortDef, Term, def};
 
 use super::Clause;
 
@@ -391,8 +391,8 @@ where
 
     fn require(&mut self, term: Term, expected: SortDef<'_>) -> Result<(), ParseError> {
         let sort = self.term_sort(term);
-        scoped!(let interners = INTERNERS);
-        if interners.borrow().get(sort) == expected {
+        def!(let definition = sort);
+        if definition == &expected {
             Ok(())
         } else {
             self.error(match expected {
@@ -432,77 +432,73 @@ where
 #[cfg(test)]
 mod tests {
     use super::{ParseErrorKind, ResolveError, parse};
-    use crate::{DefStore, INTERNERS, Intern, Op, SortDef, TermDef, scope, scoped};
+    use crate::{INTERNERS, Intern, Interners, Op, SortDef, TermDef, def};
 
     #[test]
     fn parses_directly_into_terms() {
-        // SAFETY: this test is synchronous.
-        unsafe {
-            scope(|| {
-                let int = SortDef::Int.intern();
-                let clause = parse("x >= 0 ==> result >= x", |name| match name {
-                    "x" => Ok((int, 1)),
-                    "result" => Ok((int, 2)),
-                    _ => Err(ResolveError::Unknown),
-                })
-                .unwrap();
-
-                scoped!(let interners = INTERNERS);
-                assert!(matches!(
-                    interners.borrow().get(clause.term),
-                    TermDef::Binary { op: Op::Implies, .. }
-                ));
-                assert_eq!(
-                    clause.environment.iter().map(|(_, _, binding)| *binding).collect::<Vec<_>>(),
-                    [1, 2]
-                );
+        let interners = Interners::default();
+        let body = || {
+            let int = SortDef::Int.intern();
+            let clause = parse("x >= 0 ==> result >= x", |name| match name {
+                "x" => Ok((int, 1)),
+                "result" => Ok((int, 2)),
+                _ => Err(ResolveError::Unknown),
             })
-        }
+            .unwrap();
+
+            def!(let definition = clause.term);
+            assert!(matches!(*definition, TermDef::Binary { op: Op::Implies, .. }));
+            assert_eq!(
+                clause.environment.iter().map(|(_, _, binding)| *binding).collect::<Vec<_>>(),
+                [1, 2]
+            );
+        };
+        // SAFETY: `body` is synchronous and discards all arena values.
+        unsafe { INTERNERS.set(&interners, body) }
     }
 
     #[test]
     fn renamed_variables_reuse_terms() {
-        // SAFETY: this test is synchronous.
-        unsafe {
-            scope(|| {
-                let int = SortDef::Int.intern();
-                let x = parse("x >= 0", |_| Ok((int, 1))).unwrap();
-                let value = parse("value >= 0", |_| Ok((int, 2))).unwrap();
-                assert_eq!(value.term, x.term);
-                assert_ne!(value.environment, x.environment);
-            })
-        }
+        let interners = Interners::default();
+        let body = || {
+            let int = SortDef::Int.intern();
+            let x = parse("x >= 0", |_| Ok((int, 1))).unwrap();
+            let value = parse("value >= 0", |_| Ok((int, 2))).unwrap();
+            assert_eq!(value.term, x.term);
+            assert_ne!(value.environment, x.environment);
+        };
+        // SAFETY: `body` is synchronous and discards all arena values.
+        unsafe { INTERNERS.set(&interners, body) }
     }
 
     #[test]
     fn reports_errors_by_kind_and_range() {
-        // SAFETY: this test is synchronous.
-        unsafe {
-            scope(|| {
-                let error =
-                    parse::<u8, _>("missing >= 0", |_| Err(ResolveError::Unknown)).unwrap_err();
-                assert_eq!(error.range, 0..7);
-                assert_eq!(error.kind, ParseErrorKind::Unknown("missing".to_owned()));
-            })
-        }
+        let interners = Interners::default();
+        let body = || {
+            let error = parse::<u8, _>("missing >= 0", |_| Err(ResolveError::Unknown)).unwrap_err();
+            assert_eq!(error.range, 0..7);
+            assert_eq!(error.kind, ParseErrorKind::Unknown("missing".to_owned()));
+        };
+        // SAFETY: `body` is synchronous and discards all arena values.
+        unsafe { INTERNERS.set(&interners, body) }
     }
 
     #[test]
     fn rejects_one_binding_at_two_sorts() {
-        // SAFETY: this test is synchronous.
-        unsafe {
-            scope(|| {
-                let int = SortDef::Int.intern();
-                let bool = SortDef::Bool.intern();
-                let error = parse("x == y", |name| match name {
-                    "x" => Ok((int, 1)),
-                    "y" => Ok((bool, 1)),
-                    _ => Err(ResolveError::Unknown),
-                })
-                .unwrap_err();
-                assert_eq!(error.range, 5..6);
-                assert_eq!(error.kind, ParseErrorKind::Inconsistent("y".to_owned()));
+        let interners = Interners::default();
+        let body = || {
+            let int = SortDef::Int.intern();
+            let bool = SortDef::Bool.intern();
+            let error = parse("x == y", |name| match name {
+                "x" => Ok((int, 1)),
+                "y" => Ok((bool, 1)),
+                _ => Err(ResolveError::Unknown),
             })
-        }
+            .unwrap_err();
+            assert_eq!(error.range, 5..6);
+            assert_eq!(error.kind, ParseErrorKind::Inconsistent("y".to_owned()));
+        };
+        // SAFETY: `body` is synchronous and discards all arena values.
+        unsafe { INTERNERS.set(&interners, body) }
     }
 }

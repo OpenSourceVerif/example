@@ -6,9 +6,7 @@ use std::{
 use hashbrown::HashMap;
 use smallvec::SmallVec;
 
-use crate::{
-    Declaration, DefStore, Environment, INTERNERS, Sort, Term, TermDef, TypeError, Var, scoped,
-};
+use crate::{Declaration, Environment, Sort, Term, TermDef, TypeError, Var, def};
 
 use super::Clause;
 
@@ -87,8 +85,9 @@ fn visit<B: Copy, T>(
     if let Some(term) = terms.get(&term) {
         return Ok(*term);
     }
-    let result = match owned_term(term) {
-        OwnedTerm::Var(var) => {
+    def!(let definition = term);
+    let result = match *definition {
+        TermDef::Var(var) => {
             let (declaration, actual) = actual(clause, var, get, actuals)?;
             let (Declaration::Value(expected), Actual::Value(term)) = (declaration, actual) else {
                 return Err(InstantiateError::Kind(var));
@@ -99,20 +98,20 @@ fn visit<B: Copy, T>(
             }
             term
         }
-        OwnedTerm::Const | OwnedTerm::Bool | OwnedTerm::Unit => {
+        TermDef::Const(_) | TermDef::Bool(_) | TermDef::Unit => {
             target.sort(term).map_err(InstantiateError::Invalid)?;
             term
         }
-        OwnedTerm::Unary { op, expr } => {
+        TermDef::Unary { op, expr } => {
             let expr = visit(target, clause, expr, get, terms, actuals)?;
             target.unary(op, expr)
         }
-        OwnedTerm::Binary { op, lhs, rhs } => {
+        TermDef::Binary { op, lhs, rhs } => {
             let lhs = visit(target, clause, lhs, get, terms, actuals)?;
             let rhs = visit(target, clause, rhs, get, terms, actuals)?;
             target.binary(op, lhs, rhs)
         }
-        OwnedTerm::Call { function, arguments } => {
+        TermDef::Call { function, arguments } => {
             let (declaration, actual) = actual(clause, function, get, actuals)?;
             let (Declaration::Function { domain, range }, Actual::Function(function)) =
                 (declaration, actual)
@@ -131,14 +130,14 @@ fn visit<B: Copy, T>(
                 .collect::<Result<SmallVec<[_; 4]>, _>>()?;
             target.call(function, &arguments)
         }
-        OwnedTerm::Tuple(fields) => {
+        TermDef::Tuple(fields) => {
             let fields = fields
                 .iter()
                 .map(|field| visit(target, clause, *field, get, terms, actuals))
                 .collect::<Result<SmallVec<[_; 4]>, _>>()?;
             target.tuple(&fields)
         }
-        OwnedTerm::Proj { tuple, field } => {
+        TermDef::Proj { tuple, field } => {
             let tuple = visit(target, clause, tuple, get, terms, actuals)?;
             target.proj(tuple, field)
         }
@@ -147,91 +146,58 @@ fn visit<B: Copy, T>(
     Ok(result)
 }
 
-enum OwnedTerm {
-    Var(Var),
-    Const,
-    Bool,
-    Unit,
-    Unary { op: crate::Uop, expr: Term },
-    Binary { op: crate::Op, lhs: Term, rhs: Term },
-    Call { function: Var, arguments: SmallVec<[Term; 4]> },
-    Tuple(SmallVec<[Term; 4]>),
-    Proj { tuple: Term, field: crate::Field },
-}
-
-fn owned_term(term: Term) -> OwnedTerm {
-    scoped!(let interners = INTERNERS);
-    let interners = interners.borrow();
-    match interners.get(term) {
-        TermDef::Var(var) => OwnedTerm::Var(var),
-        TermDef::Const(_) => OwnedTerm::Const,
-        TermDef::Bool(_) => OwnedTerm::Bool,
-        TermDef::Unit => OwnedTerm::Unit,
-        TermDef::Unary { op, expr } => OwnedTerm::Unary { op, expr },
-        TermDef::Binary { op, lhs, rhs } => OwnedTerm::Binary { op, lhs, rhs },
-        TermDef::Call { function, arguments } => {
-            OwnedTerm::Call { function, arguments: arguments.into() }
-        }
-        TermDef::Tuple(fields) => OwnedTerm::Tuple(fields.into()),
-        TermDef::Proj { tuple, field } => OwnedTerm::Proj { tuple, field },
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::{Actual, InstantiateError, instantiate};
     use crate::{
-        DefStore, Environment, INTERNERS, Intern, SortDef, TermDef, contract::Clause, scope, scoped,
+        Environment, INTERNERS, Intern, Interners, SortDef, TermDef, contract::Clause, def,
     };
 
     #[test]
     fn substitutes_variables_and_renames_functions() {
-        // SAFETY: this test is synchronous.
-        unsafe {
-            scope(|| {
-                let int = SortDef::Int.intern();
-                let mut source = Environment::new();
-                let function = source.bind_function(&[int], int, 1);
-                let parameter = source.bind_value(int, 2);
-                let parameter = source.var(parameter);
-                let term = source.call(function, &[parameter]);
-                let clause = Clause { term, environment: source };
+        let interners = Interners::default();
+        let body = || {
+            let int = SortDef::Int.intern();
+            let mut source = Environment::new();
+            let function = source.bind_function(&[int], int, 1);
+            let parameter = source.bind_value(int, 2);
+            let parameter = source.var(parameter);
+            let term = source.call(function, &[parameter]);
+            let clause = Clause { term, environment: source };
 
-                let mut target = Environment::new();
-                let target_function = target.bind_function(&[int], int, "f");
-                let value = target.int(42);
-                let term = instantiate(&clause, &target, |binding| match binding {
-                    1 => Some(Actual::Function(target_function)),
-                    2 => Some(Actual::Value(value)),
-                    _ => None,
-                })
-                .unwrap();
-
-                scoped!(let interners = INTERNERS);
-                assert!(matches!(
-                    interners.borrow().get(term),
-                    TermDef::Call { function, .. } if function == target_function
-                ));
+            let mut target = Environment::new();
+            let target_function = target.bind_function(&[int], int, "f");
+            let value = target.int(42);
+            let term = instantiate(&clause, &target, |binding| match binding {
+                1 => Some(Actual::Function(target_function)),
+                2 => Some(Actual::Value(value)),
+                _ => None,
             })
-        }
+            .unwrap();
+
+            def!(let definition = term);
+            assert!(matches!(
+                *definition,
+                TermDef::Call { function, .. } if function == target_function
+            ));
+        };
+        // SAFETY: `body` is synchronous and discards all arena values.
+        unsafe { INTERNERS.set(&interners, body) }
     }
 
     #[test]
     fn reports_unbound_variables() {
-        // SAFETY: this test is synchronous.
-        unsafe {
-            scope(|| {
-                let int = SortDef::Int.intern();
-                let mut source = Environment::new();
-                let var = source.bind_value(int, 7);
-                let term = source.var(var);
-                let clause = Clause { term, environment: source };
-                let target = Environment::<()>::new();
-                assert_eq!(
-                    instantiate(&clause, &target, |_| None),
-                    Err(InstantiateError::Unbound(7))
-                );
-            })
-        }
+        let interners = Interners::default();
+        let body = || {
+            let int = SortDef::Int.intern();
+            let mut source = Environment::new();
+            let var = source.bind_value(int, 7);
+            let term = source.var(var);
+            let clause = Clause { term, environment: source };
+            let target = Environment::<()>::new();
+            assert_eq!(instantiate(&clause, &target, |_| None), Err(InstantiateError::Unbound(7)));
+        };
+        // SAFETY: `body` is synchronous and discards all arena values.
+        unsafe { INTERNERS.set(&interners, body) }
     }
 }

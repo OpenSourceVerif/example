@@ -33,20 +33,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
 
 [[package]]
-name = "generative-scoped-tls"
-version = "0.1.0"
-source = "git+https://github.com/sssxks/generative-scoped-tls?rev=3c7796dffb0671fc646420e2be646c58965b9710#3c7796dffb0671fc646420e2be646c58965b9710"
-dependencies = [
- "generativity",
-]
-
-[[package]]
-name = "generativity"
-version = "1.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d2c81fb5260e37854d09d5c87183309fd8c555b75289427884b25660bc87a85e"
-
-[[package]]
 name = "hashbrown"
 version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -64,16 +50,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "44faf5bb8861a9c72e20d3fb0fdbd59233e43056e2b80475ab0aacdc2e781355"
 
 [[package]]
-name = "interner"
-version = "0.1.0"
-dependencies = [
- "bumpalo",
- "hashbrown",
- "index_vec",
-]
-
-[[package]]
-name = "play"
+name = "scoped-tls"
 version = "0.1.0"
 
 [[package]]
@@ -86,11 +63,11 @@ checksum = "8ed6a63f02c8539c91a8685a86f4099661ba3da017932f6ebbea6de3f0fa7c90"
 name = "verifier-core"
 version = "0.1.0"
 dependencies = [
+ "bumpalo",
  "fixedbitset",
- "generative-scoped-tls",
  "hashbrown",
  "index_vec",
- "interner",
+ "scoped-tls",
  "smallvec",
 ]
 
