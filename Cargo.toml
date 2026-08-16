@@ -17,7 +17,6 @@ hashbrown = "0.17.1"
 index_vec = "0.1.4"
 smallvec = { version = "1", features = ["const_generics"] }
 fixedbitset = "0.5.7"
-interner = { path = "crates/interner" }
 scoped-tls = { path = "crates/scoped-tls" }
 verifier-core = { path = "crates/verifier-core" }
 verifier-rustc = { path = "crates/verifier-rustc" }

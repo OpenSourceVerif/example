@@ -4,11 +4,6 @@ The project is organized around dependency boundaries rather than execution
 order. Higher layers may depend on lower layers; lower layers must not import
 types from higher layers.
 
-## `interner`
-
-`interner` owns the generic storage used to assign stable indices to hashable
-values and strings. It has no verifier-specific concepts.
-
 ## `verifier-core`
 
 `verifier-core` owns symbolic terms, sorts, symbols, open contract clauses,

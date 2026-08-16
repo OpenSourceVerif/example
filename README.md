@@ -7,7 +7,6 @@ scripts.
 
 ## Workspace
 
-- `crates/interner` provides generic array and string interners.
 - `crates/verifier-core` owns the rustc-independent symbolic IR and SMT rendering.
 - `crates/verifier-rustc` extracts contracts and generates obligations from MIR.
 - `crates/verifier-driver` provides the `verifier` compiler-driver executable.
@@ -15,9 +14,9 @@ scripts.
 The dependency direction is strictly:
 
 ```text
-interner <- verifier-core <- verifier-rustc <- verifier-driver
-                         ^                    |
-                         +--------------------+
+verifier-core <- verifier-rustc <- verifier-driver
+           ^                          |
+           +--------------------------+
 ```
 
 ## Development
