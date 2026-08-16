@@ -5,8 +5,8 @@ use std::fmt::Display;
 use fixedbitset::FixedBitSet;
 
 use crate::{
-    Context, Declaration, DefStore, Environment, Field, Name, Op, Sort, SortDef, Term, TermKind,
-    Uop, Var, swrite,
+    Declaration, DefStore, Environment, Field, INTERNERS, Intern, Interners, Name, Op, Sort,
+    SortDef, Term, TermDef, TypeError, Uop, Var, scoped, swrite,
 };
 
 mod string_write {
@@ -54,60 +54,70 @@ impl Uop {
     }
 }
 
-pub fn format_expr(sink: &mut String, ctxt: &Context, environment: &Environment<Name>, expr: Term) {
-    match ctxt.get(expr).kind {
-        TermKind::Var(var) => format_var(sink, ctxt, environment, var),
-        TermKind::Const(value) => swrite!(sink, "{}", value),
-        TermKind::Bool(value) => swrite!(sink, "{}", value),
-        TermKind::Call { function, arguments } => {
+pub fn format_expr(sink: &mut String, environment: &Environment<Name>, expr: Term) {
+    scoped!(let interners = INTERNERS);
+    format_expr_with(sink, &interners.borrow(), environment, expr);
+}
+
+fn format_expr_with(
+    sink: &mut String,
+    interners: &Interners,
+    environment: &Environment<Name>,
+    expr: Term,
+) {
+    match interners.get(expr) {
+        TermDef::Var(var) => format_var(sink, interners, environment, var),
+        TermDef::Const(value) => swrite!(sink, "{}", value),
+        TermDef::Bool(value) => swrite!(sink, "{}", value),
+        TermDef::Call { function, arguments } => {
             swrite!(sink, "(");
-            format_var(sink, ctxt, environment, function);
+            format_var(sink, interners, environment, function);
             for argument in arguments {
                 swrite!(sink, " ");
-                format_expr(sink, ctxt, environment, *argument);
+                format_expr_with(sink, interners, environment, *argument);
             }
             swrite!(sink, ")");
         }
-        TermKind::Unary { op, expr } => {
+        TermDef::Unary { op, expr } => {
             swrite!(sink, "({} ", op.smt_style());
-            format_expr(sink, ctxt, environment, expr);
+            format_expr_with(sink, interners, environment, expr);
             swrite!(sink, ")");
         }
-        TermKind::Binary { op, lhs, rhs } => {
+        TermDef::Binary { op, lhs, rhs } => {
             swrite!(sink, "({} ", op.smt_style());
-            format_expr(sink, ctxt, environment, lhs);
+            format_expr_with(sink, interners, environment, lhs);
             swrite!(sink, " ");
-            format_expr(sink, ctxt, environment, rhs);
+            format_expr_with(sink, interners, environment, rhs);
             swrite!(sink, ")");
         }
-        TermKind::Unit => swrite!(sink, "tuple0"),
-        TermKind::Tuple(fields) => {
+        TermDef::Unit => swrite!(sink, "tuple0"),
+        TermDef::Tuple(fields) => {
             swrite!(sink, "(tuple{}", fields.len());
             for field in fields {
                 swrite!(sink, " ");
-                format_expr(sink, ctxt, environment, *field);
+                format_expr_with(sink, interners, environment, *field);
             }
             swrite!(sink, ")");
         }
-        TermKind::Proj { tuple, field } => {
+        TermDef::Proj { tuple, field } => {
             let sort =
                 environment.cached_sort(tuple).expect("unchecked tuple reached SMT emission");
-            let SortDef::Tuple(fields) = ctxt.get(sort) else {
+            let SortDef::Tuple(fields) = interners.get(sort) else {
                 panic!("projection from non-tuple term reached SMT emission")
             };
             swrite!(sink, "(tuple{}!{} ", fields.len(), field);
-            format_expr(sink, ctxt, environment, tuple);
+            format_expr_with(sink, interners, environment, tuple);
             swrite!(sink, ")");
         }
     }
 }
 
-fn format_var(sink: &mut String, ctxt: &Context, environment: &Environment<Name>, var: Var) {
-    swrite!(sink, "{}!{}", ctxt.get(*environment.binding(var)), var.index());
+fn format_var(sink: &mut String, interners: &Interners, environment: &Environment<Name>, var: Var) {
+    swrite!(sink, "{}!{}", interners.get(*environment.binding(var)), var.index());
 }
 
-pub fn format_sort(sink: &mut String, ctxt: &Context, sort: Sort) {
-    match ctxt.get(sort) {
+fn format_sort(sink: &mut String, interners: &Interners, sort: Sort) {
+    match interners.get(sort) {
         SortDef::Int => swrite!(sink, "Int"),
         SortDef::Bool => swrite!(sink, "Bool"),
         SortDef::Tuple(fields) if fields.is_empty() => swrite!(sink, "Tuple0"),
@@ -115,37 +125,37 @@ pub fn format_sort(sink: &mut String, ctxt: &Context, sort: Sort) {
             swrite!(sink, "(Tuple{}", fields.len());
             for field in fields {
                 swrite!(sink, " ");
-                format_sort(sink, ctxt, *field);
+                format_sort(sink, interners, *field);
             }
             swrite!(sink, ")");
         }
     }
 }
 
-fn collect_tuple_arities(arities: &mut FixedBitSet, ctxt: &Context, sort: Sort) {
-    let SortDef::Tuple(fields) = ctxt.get(sort) else { return };
+fn collect_tuple_arities(arities: &mut FixedBitSet, interners: &Interners, sort: Sort) {
+    let SortDef::Tuple(fields) = interners.get(sort) else { return };
     arities.grow(fields.len() + 1);
     arities.insert(fields.len());
     for field in fields {
-        collect_tuple_arities(arities, ctxt, *field);
+        collect_tuple_arities(arities, interners, *field);
     }
 }
 
-fn declare_tuples(sink: &mut String, ctxt: &Context, environment: &Environment<Name>) {
+fn declare_tuples(sink: &mut String, interners: &Interners, environment: &Environment<Name>) {
     let mut arities = FixedBitSet::with_capacity(64);
     for (_, declaration, _) in environment.iter() {
         match declaration {
-            Declaration::Value(sort) => collect_tuple_arities(&mut arities, ctxt, *sort),
+            Declaration::Value(sort) => collect_tuple_arities(&mut arities, interners, *sort),
             Declaration::Function { domain, range } => {
                 for sort in domain {
-                    collect_tuple_arities(&mut arities, ctxt, *sort);
+                    collect_tuple_arities(&mut arities, interners, *sort);
                 }
-                collect_tuple_arities(&mut arities, ctxt, *range);
+                collect_tuple_arities(&mut arities, interners, *range);
             }
         }
     }
     for sort in environment.cached_sorts() {
-        collect_tuple_arities(&mut arities, ctxt, sort);
+        collect_tuple_arities(&mut arities, interners, sort);
     }
 
     for arity in arities.ones() {
@@ -169,113 +179,147 @@ fn declare_tuples(sink: &mut String, ctxt: &Context, environment: &Environment<N
     }
 }
 
-pub fn smt(ctxt: &Context, environment: &Environment<Name>, vc: Term) -> String {
-    let sort = environment.cached_sort(vc).expect("unchecked verification condition");
-    assert_eq!(ctxt.get(sort), SortDef::Bool, "verification condition must be Bool");
+pub fn smt(environment: &Environment<Name>, vc: Term) -> Result<String, TypeError> {
+    let sort = environment.sort(vc)?;
+    let bool = SortDef::Bool.intern();
+    if sort != bool {
+        return Err(TypeError::Sort { expected: bool, actual: sort });
+    }
+
+    scoped!(let interners = INTERNERS);
+    let interners = interners.borrow();
 
     let mut result = String::new();
     let sink = &mut result;
     swrite!(sink, "(set-logic ALL)\n\n");
-    declare_tuples(sink, ctxt, environment);
+    declare_tuples(sink, &interners, environment);
 
     for (var, declaration, _) in environment.iter() {
         match declaration {
             Declaration::Value(sort) => {
                 swrite!(sink, "(declare-const ");
-                format_var(sink, ctxt, environment, var);
+                format_var(sink, &interners, environment, var);
                 swrite!(sink, " ");
-                format_sort(sink, ctxt, *sort);
+                format_sort(sink, &interners, *sort);
                 swrite!(sink, ")\n");
             }
             Declaration::Function { domain, range } => {
                 swrite!(sink, "(declare-fun ");
-                format_var(sink, ctxt, environment, var);
+                format_var(sink, &interners, environment, var);
                 swrite!(sink, " (");
                 for (index, sort) in domain.iter().enumerate() {
                     if index > 0 {
                         swrite!(sink, " ");
                     }
-                    format_sort(sink, ctxt, *sort);
+                    format_sort(sink, &interners, *sort);
                 }
                 swrite!(sink, ") ");
-                format_sort(sink, ctxt, *range);
+                format_sort(sink, &interners, *range);
                 swrite!(sink, ")\n");
             }
         }
     }
 
     swrite!(sink, "\n(assert (not ");
-    format_expr(sink, ctxt, environment, vc);
+    format_expr_with(sink, &interners, environment, vc);
     swrite!(sink, "))\n\n(check-sat)\n(get-model)\n");
-    result
+    Ok(result)
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{Context, Environment, format_expr, smt};
+    use crate::{
+        Environment, Fields, Intern, Op, SortDef, TermDef, TypeError, format_expr, scope, smt,
+    };
 
     #[test]
     fn formats_full_width_integer_constants() {
-        let mut context = Context::default();
-        let mut environment = Environment::new();
-        let value = context.builder(&mut environment).int_lit(i128::MIN);
-        let mut formatted = String::new();
-        format_expr(&mut formatted, &context, &environment, value);
-        assert_eq!(formatted, i128::MIN.to_string());
+        // SAFETY: this test is synchronous.
+        unsafe {
+            scope(|| {
+                let environment = Environment::<crate::Name>::new();
+                let value = environment.int(i128::MIN);
+                let mut formatted = String::new();
+                format_expr(&mut formatted, &environment, value);
+                assert_eq!(formatted, i128::MIN.to_string());
+            })
+        }
     }
 
     #[test]
     fn distinguishes_variables_with_the_same_name() {
-        let mut context = Context::default();
-        let int = context.int_sort();
-        let name = context.name("x");
-        let mut environment = Environment::new();
-        let first = environment.bind_value(int, name);
-        let second = environment.bind_value(int, name);
-        let mut terms = context.builder(&mut environment);
-        let first = terms.var(first);
-        let second = terms.var(second);
-        let equality = terms.eq(first, second);
-        let output = smt(&context, &environment, equality);
-        assert!(output.contains("(declare-const x!0 Int)"));
-        assert!(output.contains("(declare-const x!1 Int)"));
-        assert!(output.contains("(= x!0 x!1)"));
+        // SAFETY: this test is synchronous.
+        unsafe {
+            scope(|| {
+                let int = SortDef::Int.intern();
+                let name = "x".intern();
+                let mut environment = Environment::new();
+                let first = environment.bind_value(int, name);
+                let second = environment.bind_value(int, name);
+                let first = environment.var(first);
+                let second = environment.var(second);
+                let equality = environment.eq(first, second);
+                let output = smt(&environment, equality).unwrap();
+                assert!(output.contains("(declare-const x!0 Int)"));
+                assert!(output.contains("(declare-const x!1 Int)"));
+                assert!(output.contains("(= x!0 x!1)"));
+            })
+        }
     }
 
     #[test]
     fn declares_functions_and_projects_tuples() {
-        let mut context = Context::default();
-        let int = context.int_sort();
-        let bool = context.bool_sort();
-        let unit = context.unit_sort();
-        let pair = context.tuple_sort(&[int, bool]);
-        let pair_name = context.name("pair");
-        let unit_name = context.name("unit");
-        let function_name = context.name("f");
-        let mut environment = Environment::new();
-        let pair = environment.bind_value(pair, pair_name);
-        let unit = environment.bind_value(unit, unit_name);
-        let function = environment.bind_function(&[int], int, function_name);
-        let mut terms = context.builder(&mut environment);
-        let pair = terms.var(pair);
-        let unit = terms.var(unit);
-        let first = terms.proj(pair, 0);
-        let one = terms.int_lit(1);
-        let called = terms.call(function, &[one]);
-        let call_holds = terms.eq(called, one);
-        let pair_holds = terms.eq(first, one);
-        let unit_value = terms.unit();
-        let unit_holds = terms.eq(unit, unit_value);
-        let tail = terms.and(pair_holds, unit_holds);
-        let vc = terms.and(call_holds, tail);
-        let output = smt(&context, &environment, vc);
-        assert!(output.contains("(declare-datatype Tuple0 ((tuple0)))"));
-        assert!(output.contains(
-            "(declare-datatype Tuple2 (par (T0 T1) ((tuple2 (tuple2!0 T0) (tuple2!1 T1)))))"
-        ));
-        assert!(output.contains("(declare-const pair!0 (Tuple2 Int Bool))"));
-        assert!(output.contains("(declare-fun f!2 (Int) Int)"));
-        assert!(output.contains("(tuple2!0 pair!0)"));
-        assert!(output.contains("(= unit!1 tuple0)"));
+        // SAFETY: this test is synchronous.
+        unsafe {
+            scope(|| {
+                let int = SortDef::Int.intern();
+                let bool = SortDef::Bool.intern();
+                let unit = SortDef::Tuple(Fields::new(&[])).intern();
+                let pair_sort = SortDef::Tuple(Fields::new(&[int, bool])).intern();
+                let mut environment = Environment::new();
+                let pair = environment.bind_value(pair_sort, "pair".intern());
+                let unit = environment.bind_value(unit, "unit".intern());
+                let function = environment.bind_function(&[int], int, "f".intern());
+                let pair = environment.var(pair);
+                let unit = environment.var(unit);
+                let first = environment.proj(pair, 0);
+                let one = environment.int(1);
+                let called = environment.call(function, &[one]);
+                let call_holds = environment.eq(called, one);
+                let pair_holds = environment.eq(first, one);
+                let unit_value = environment.unit();
+                let unit_holds = environment.eq(unit, unit_value);
+                let tail = environment.and(pair_holds, unit_holds);
+                let vc = environment.and(call_holds, tail);
+                let output = smt(&environment, vc).unwrap();
+                assert!(output.contains("(declare-datatype Tuple0 ((tuple0)))"));
+                assert!(output.contains(
+                    "(declare-datatype Tuple2 (par (T0 T1) ((tuple2 (tuple2!0 T0) (tuple2!1 T1)))))"
+                ));
+                assert!(output.contains("(declare-const pair!0 (Tuple2 Int Bool))"));
+                assert!(output.contains("(declare-fun f!2 (Int) Int)"));
+                assert!(output.contains("(tuple2!0 pair!0)"));
+                assert!(output.contains("(= unit!1 tuple0)"));
+            })
+        }
+    }
+
+    #[test]
+    fn checks_raw_terms_at_the_smt_boundary() {
+        // SAFETY: this test is synchronous.
+        unsafe {
+            scope(|| {
+                let environment = Environment::<crate::Name>::new();
+                let yes = TermDef::Bool(true).intern();
+                let invalid = TermDef::Binary { op: Op::Add, lhs: yes, rhs: yes }.intern();
+                let int = SortDef::Int.intern();
+                let bool = SortDef::Bool.intern();
+
+                assert_eq!(
+                    smt(&environment, invalid),
+                    Err(TypeError::Sort { expected: int, actual: bool })
+                );
+            })
+        }
     }
 }

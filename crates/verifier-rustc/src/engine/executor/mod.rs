@@ -6,7 +6,7 @@ use rustc_middle::{
 use rustc_span::Symbol;
 use smallvec::SmallVec;
 use verifier_core::{
-    Builder, Context, Environment, Name, Term,
+    Environment, Intern, Name, Term,
     contract::{Actual, instantiate},
 };
 
@@ -55,7 +55,6 @@ fn entry_loc(block: BasicBlock) -> Location {
 }
 
 struct Executor<'a, 'tcx> {
-    cx: &'a mut Context,
     environment: &'a mut Environment<Name>,
     tcx: TyCtxt<'tcx>,
     body: &'a Body<'tcx>,
@@ -70,7 +69,6 @@ struct Executor<'a, 'tcx> {
 /// Executes a rustc MIR control-flow graph using symbolic values and generates
 /// the obligations induced by its source-level contracts.
 pub(crate) fn execute<'tcx>(
-    cx: &mut Context,
     environment: &mut Environment<Name>,
     tcx: TyCtxt<'tcx>,
     body: &Body<'tcx>,
@@ -79,7 +77,6 @@ pub(crate) fn execute<'tcx>(
     let location = entry_loc(START_BLOCK);
     let loops = LoopAnalysis::new(body, spec).map_err(|error| location.error(error.to_string()))?;
     Executor {
-        cx,
         environment,
         tcx,
         body,
@@ -93,26 +90,16 @@ pub(crate) fn execute<'tcx>(
     .run()
 }
 
-fn conjoin<'a>(
-    cx: &mut Context,
-    environment: &mut Environment<Name>,
-    terms: impl IntoIterator<Item = &'a Term>,
-) -> Term {
+fn conjoin<'a>(environment: &Environment<Name>, terms: impl IntoIterator<Item = &'a Term>) -> Term {
     let mut terms = terms.into_iter().copied();
-    let mut builder = cx.builder(environment);
-
     if let Some(first) = terms.next() {
-        terms.fold(first, |lhs, rhs| builder.and(lhs, rhs))
+        terms.fold(first, |lhs, rhs| environment.and(lhs, rhs))
     } else {
-        builder.bool_lit(true)
+        environment.bool(true)
     }
 }
 
 impl<'a, 'tcx> Executor<'a, 'tcx> {
-    fn build(&mut self) -> Builder<'_, Name> {
-        self.cx.builder(self.environment)
-    }
-
     fn add_integer_range_facts(
         &mut self,
         ty: Ty<'tcx>,
@@ -120,10 +107,10 @@ impl<'a, 'tcx> Executor<'a, 'tcx> {
         facts: &mut SmallVec<[Term; 8]>,
     ) {
         let Some(bounds) = integer_layout(self.tcx, ty).and_then(integer_bounds) else { return };
-        let minimum = self.build().int_lit(bounds.0);
-        let maximum = self.build().int_lit(bounds.1);
-        facts.push(self.build().ge(term, minimum));
-        facts.push(self.build().le(term, maximum));
+        let minimum = self.environment.int(bounds.0);
+        let maximum = self.environment.int(bounds.1);
+        facts.push(self.environment.ge(term, minimum));
+        facts.push(self.environment.le(term, maximum));
     }
 
     fn run(mut self) -> Result<Vec<Obligation>, ExecutionError> {
@@ -155,22 +142,22 @@ impl<'a, 'tcx> Executor<'a, 'tcx> {
         for index in 1..=self.body.arg_count {
             let local = Local::from_usize(index);
             let ty = self.body.local_decls[local].ty;
-            let Some(sort) = self.cx.sort(self.tcx, ty) else {
+            let Some(sort) = ty.sort(self.tcx) else {
                 return Err(location.error(format!("argument {index} has unsupported type `{ty}`")));
             };
             let name = match self.argument_name(local, index) {
-                Some(name) => self.cx.name(name.as_str()),
-                None => self.cx.name(&format!("arg{index}")),
+                Some(name) => name.as_str().intern(),
+                None => format!("arg{index}").as_str().intern(),
             };
             let var = self.environment.bind_value(sort, name);
-            let term = self.build().var(var);
+            let term = self.environment.var(var);
             self.entry[local] = Some(term);
             store[local] = Some(term);
             self.add_integer_range_facts(ty, term, &mut facts);
         }
 
         for clause in &self.spec.requires {
-            let term = instantiate(self.cx, &clause.node, self.environment, |slot| match slot {
+            let term = instantiate(&clause.node, self.environment, |slot| match slot {
                 Slot::Local(local) => store[local].map(Actual::Value),
                 Slot::Result => None,
             })
@@ -200,23 +187,29 @@ impl<'a, 'tcx> Executor<'a, 'tcx> {
 
 #[cfg(test)]
 mod tests {
-    use verifier_core::{Context, DefStore, Environment, Op, TermKind};
+    use verifier_core::{
+        DefStore, Environment, INTERNERS, Intern, Op, SortDef, TermDef, scope, scoped,
+    };
 
     #[test]
     fn assertion_vc_is_guarded_by_its_path_condition() {
-        let mut cx = Context::default();
-        let bool_sort = cx.bool_sort();
-        let mut environment = Environment::new();
-        let path_var = environment.bind_value(bool_sort, "path");
-        let assertion_var = environment.bind_value(bool_sort, "assertion");
-        let mut terms = cx.builder(&mut environment);
-        let path = terms.var(path_var);
-        let assertion = terms.var(assertion_var);
-        let vc = terms.implies(path, assertion);
+        // SAFETY: this test is synchronous.
+        unsafe {
+            scope(|| {
+                let bool_sort = SortDef::Bool.intern();
+                let mut environment = Environment::new();
+                let path_var = environment.bind_value(bool_sort, "path");
+                let assertion_var = environment.bind_value(bool_sort, "assertion");
+                let path = environment.var(path_var);
+                let assertion = environment.var(assertion_var);
+                let vc = environment.implies(path, assertion);
 
-        assert_eq!(
-            terms.context().get(vc).kind,
-            TermKind::Binary { op: Op::Implies, lhs: path, rhs: assertion }
-        );
+                scoped!(let interners = INTERNERS);
+                assert_eq!(
+                    interners.borrow().get(vc),
+                    TermDef::Binary { op: Op::Implies, lhs: path, rhs: assertion }
+                );
+            })
+        }
     }
 }

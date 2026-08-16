@@ -1,10 +1,11 @@
-mod context;
 pub mod contract;
 mod environment;
+mod intern;
 pub mod ir;
 pub mod smt;
 
-pub use context::{Context, DefStore};
-pub use environment::{Builder, Declaration, Environment};
-pub use ir::{Field, Fields, Name, Op, Sort, SortDef, Term, TermDef, TermKind, Uop, Var};
+pub use environment::{Declaration, Environment, TypeError};
+pub use generative_scoped_tls::scoped;
+pub use intern::{DefStore, INTERNERS, Intern, Interners, scope};
+pub use ir::{Field, Fields, Name, Op, Sort, SortDef, Term, TermDef, Uop, Var};
 pub use smt::{format_expr, smt};

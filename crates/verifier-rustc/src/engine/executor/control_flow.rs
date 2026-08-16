@@ -3,7 +3,7 @@ use rustc_middle::mir::{
 };
 use smallvec::SmallVec;
 use verifier_core::{
-    Term,
+    Intern, Term,
     contract::{Actual, instantiate},
 };
 
@@ -24,7 +24,7 @@ impl<'a, 'tcx> Executor<'a, 'tcx> {
         clause: &Clause,
         state: &State,
     ) -> Result<Term, ExecutionError> {
-        instantiate(self.cx, &clause.node, self.environment, |slot| match slot {
+        instantiate(&clause.node, self.environment, |slot| match slot {
             Slot::Local(local) => state.store[local].map(Actual::Value),
             Slot::Result => None,
         })
@@ -37,7 +37,7 @@ impl<'a, 'tcx> Executor<'a, 'tcx> {
         value: Term,
         location: Location,
     ) -> Result<Term, ExecutionError> {
-        instantiate(self.cx, &clause.node, self.environment, |slot| match slot {
+        instantiate(&clause.node, self.environment, |slot| match slot {
             Slot::Local(local) => self.entry[local].map(Actual::Value),
             Slot::Result => Some(Actual::Value(value)),
         })
@@ -80,10 +80,10 @@ impl<'a, 'tcx> Executor<'a, 'tcx> {
             )));
         }
 
-        let premise = conjoin(self.cx, self.environment, &state.facts);
+        let premise = conjoin(self.environment, &state.facts);
         for clause in &info.invariants {
             let invariant = self.instantiate_in_state(clause, &state)?;
-            let condition = self.build().implies(premise, invariant);
+            let condition = self.environment.implies(premise, invariant);
             self.obligations.push(Obligation {
                 kind: ObligationKind::LoopInvariantInitialization,
                 location: state.location,
@@ -97,7 +97,7 @@ impl<'a, 'tcx> Executor<'a, 'tcx> {
                 continue;
             }
             let ty = self.body.local_decls[local].ty;
-            let Some(sort) = self.cx.sort(self.tcx, ty) else { continue };
+            let Some(sort) = ty.sort(self.tcx) else { continue };
             let name = format!(
                 "loop_{}_local_{}_{}",
                 info.header.index(),
@@ -105,9 +105,9 @@ impl<'a, 'tcx> Executor<'a, 'tcx> {
                 self.fresh_counter
             );
             self.fresh_counter += 1;
-            let name = self.cx.name(&name);
+            let name = name.as_str().intern();
             let var = self.environment.bind_value(sort, name);
-            let value = self.build().var(var);
+            let value = self.environment.var(var);
             state.store[local] = Some(value);
             self.add_integer_range_facts(ty, value, &mut state.facts);
         }
@@ -128,10 +128,10 @@ impl<'a, 'tcx> Executor<'a, 'tcx> {
                 info.header
             )));
         }
-        let premise = conjoin(self.cx, self.environment, &state.facts);
+        let premise = conjoin(self.environment, &state.facts);
         for clause in &info.invariants {
             let invariant = self.instantiate_in_state(clause, &state)?;
-            let condition = self.build().implies(premise, invariant);
+            let condition = self.environment.implies(premise, invariant);
             self.obligations.push(Obligation {
                 kind: ObligationKind::LoopInvariantPreservation,
                 location: state.location,
@@ -215,15 +215,15 @@ impl<'a, 'tcx, 'mir> Execute<&'mir TerminatorKind<'tcx>> for Executor<'a, 'tcx> 
                 }
 
                 for equality in excluded {
-                    let inequality = self.build().not(equality);
+                    let inequality = self.environment.not(equality);
                     state.facts.push(inequality);
                 }
                 self.transition(state, targets.otherwise(), pending)?;
             }
             TerminatorKind::Assert { cond, expected, target, .. } => {
                 let assertion = self.evaluate(&state, (cond, *expected))?;
-                let current_fact = conjoin(self.cx, self.environment, &state.facts);
-                let implication = self.build().implies(current_fact, assertion);
+                let current_fact = conjoin(self.environment, &state.facts);
+                let implication = self.environment.implies(current_fact, assertion);
                 self.obligations.push(Obligation {
                     kind: ObligationKind::RuntimeAssertion,
                     location: state.location,
@@ -238,13 +238,13 @@ impl<'a, 'tcx, 'mir> Execute<&'mir TerminatorKind<'tcx>> for Executor<'a, 'tcx> 
                 self.transition(state, *target, pending)?;
             }
             TerminatorKind::Return => {
-                let fact = conjoin(self.cx, self.environment, &state.facts);
+                let fact = conjoin(self.environment, &state.facts);
                 let value = state.store[RETURN_PLACE]
                     .ok_or_else(|| state.location.error("return place is uninitialized"))?;
                 for clause in &self.spec.ensures {
                     let postcondition =
                         self.instantiate_postcondition(clause, value, state.location)?;
-                    let condition = self.build().implies(fact, postcondition);
+                    let condition = self.environment.implies(fact, postcondition);
                     self.obligations.push(Obligation {
                         kind: ObligationKind::Postcondition,
                         location: state.location,

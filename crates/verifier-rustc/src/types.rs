@@ -1,23 +1,21 @@
 use rustc_middle::ty::{IntTy, Ty, TyCtxt, TyKind, UintTy};
 use smallvec::SmallVec;
-use verifier_core::{Context, Sort};
+use verifier_core::{Fields, Intern, Sort, SortDef};
 
 pub(crate) trait RustcTy<'tcx> {
-    fn sort(&mut self, tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> Option<Sort>;
+    fn sort(self, tcx: TyCtxt<'tcx>) -> Option<Sort>;
 }
 
-impl<'tcx> RustcTy<'tcx> for Context {
-    fn sort(&mut self, tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> Option<Sort> {
-        if let TyKind::Tuple(fields) = ty.kind() {
-            let sorts = fields
-                .iter()
-                .map(|field| self.sort(tcx, field))
-                .collect::<Option<SmallVec<[_; 4]>>>()?;
-            Some(self.tuple_sort(&sorts))
-        } else if ty.is_bool() {
-            Some(self.bool_sort())
-        } else if integer_layout(tcx, ty).and_then(|layout| integer_bounds(layout)).is_some() {
-            Some(self.int_sort())
+impl<'tcx> RustcTy<'tcx> for Ty<'tcx> {
+    fn sort(self, tcx: TyCtxt<'tcx>) -> Option<Sort> {
+        if let TyKind::Tuple(fields) = self.kind() {
+            let sorts =
+                fields.iter().map(|field| field.sort(tcx)).collect::<Option<SmallVec<[_; 4]>>>()?;
+            Some(SortDef::Tuple(Fields::new(&sorts)).intern())
+        } else if self.is_bool() {
+            Some(SortDef::Bool.intern())
+        } else if integer_layout(tcx, self).and_then(integer_bounds).is_some() {
+            Some(SortDef::Int.intern())
         } else {
             None
         }

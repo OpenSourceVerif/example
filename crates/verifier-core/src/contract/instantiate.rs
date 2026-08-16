@@ -1,9 +1,14 @@
-use std::{error::Error, fmt::{self, Display}};
+use std::{
+    error::Error,
+    fmt::{self, Display},
+};
 
 use hashbrown::HashMap;
 use smallvec::SmallVec;
 
-use crate::{Builder, Context, Declaration, DefStore, Environment, Sort, Term, TermKind, Var};
+use crate::{
+    Declaration, DefStore, Environment, INTERNERS, Sort, Term, TermDef, TypeError, Var, scoped,
+};
 
 use super::Clause;
 
@@ -14,7 +19,7 @@ pub enum Actual {
     Function(Var),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InstantiateError<B> {
     Missing(Var),
     Target(Var),
@@ -22,6 +27,7 @@ pub enum InstantiateError<B> {
     Kind(Var),
     Sort { var: Var, expected: Sort, actual: Sort },
     Signature(Var),
+    Invalid(TypeError),
 }
 
 impl<B: Display> Display for InstantiateError<B> {
@@ -35,6 +41,7 @@ impl<B: Display> Display for InstantiateError<B> {
                 write!(f, "variable {var:?} expects {expected:?}, found {actual:?}")
             }
             Self::Signature(var) => write!(f, "function {var:?} has a different signature"),
+            Self::Invalid(error) => write!(f, "invalid target term: {error}"),
         }
     }
 }
@@ -42,15 +49,13 @@ impl<B: Display> Display for InstantiateError<B> {
 impl<B: fmt::Debug + Display> Error for InstantiateError<B> {}
 
 pub fn instantiate<B: Copy, T>(
-    cx: &mut Context,
     clause: &Clause<B>,
-    target: &mut Environment<T>,
+    target: &Environment<T>,
     mut get: impl FnMut(B) -> Option<Actual>,
 ) -> Result<Term, InstantiateError<B>> {
-    let mut builder = cx.builder(target);
     let mut terms = HashMap::new();
     let mut actuals = HashMap::new();
-    visit(&mut builder, clause, clause.term, &mut get, &mut terms, &mut actuals)
+    visit(target, clause, clause.term, &mut get, &mut terms, &mut actuals)
 }
 
 fn actual<B: Copy>(
@@ -72,7 +77,7 @@ fn actual<B: Copy>(
 }
 
 fn visit<B: Copy, T>(
-    builder: &mut Builder<'_, T>,
+    target: &Environment<T>,
     clause: &Clause<B>,
     term: Term,
     get: &mut impl FnMut(B) -> Option<Actual>,
@@ -82,113 +87,151 @@ fn visit<B: Copy, T>(
     if let Some(term) = terms.get(&term) {
         return Ok(*term);
     }
-    let result = match builder.context().get(term).kind {
-        TermKind::Var(var) => {
+    let result = match owned_term(term) {
+        OwnedTerm::Var(var) => {
             let (declaration, actual) = actual(clause, var, get, actuals)?;
             let (Declaration::Value(expected), Actual::Value(term)) = (declaration, actual) else {
                 return Err(InstantiateError::Kind(var));
             };
-            let found = builder.term_sort(term);
+            let found = target.sort(term).map_err(InstantiateError::Invalid)?;
             if found != expected {
                 return Err(InstantiateError::Sort { var, expected, actual: found });
             }
             term
         }
-        TermKind::Const(_) | TermKind::Bool(_) | TermKind::Unit => {
-            builder.term_sort(term);
+        OwnedTerm::Const | OwnedTerm::Bool | OwnedTerm::Unit => {
+            target.sort(term).map_err(InstantiateError::Invalid)?;
             term
         }
-        TermKind::Unary { op, expr } => {
-            let expr = visit(builder, clause, expr, get, terms, actuals)?;
-            builder.unary(op, expr)
+        OwnedTerm::Unary { op, expr } => {
+            let expr = visit(target, clause, expr, get, terms, actuals)?;
+            target.unary(op, expr)
         }
-        TermKind::Binary { op, lhs, rhs } => {
-            let lhs = visit(builder, clause, lhs, get, terms, actuals)?;
-            let rhs = visit(builder, clause, rhs, get, terms, actuals)?;
-            builder.binary(op, lhs, rhs)
+        OwnedTerm::Binary { op, lhs, rhs } => {
+            let lhs = visit(target, clause, lhs, get, terms, actuals)?;
+            let rhs = visit(target, clause, rhs, get, terms, actuals)?;
+            target.binary(op, lhs, rhs)
         }
-        TermKind::Call { function, arguments } => {
-            let arguments: SmallVec<[_; 4]> = arguments.into();
+        OwnedTerm::Call { function, arguments } => {
             let (declaration, actual) = actual(clause, function, get, actuals)?;
             let (Declaration::Function { domain, range }, Actual::Function(function)) =
                 (declaration, actual)
             else {
                 return Err(InstantiateError::Kind(function));
             };
-            let Some((target, _)) = builder.environment().get(function) else {
+            let Some((target_declaration, _)) = target.get(function) else {
                 return Err(InstantiateError::Target(function));
             };
-            if target != &(Declaration::Function { domain, range }) {
+            if target_declaration != &(Declaration::Function { domain, range }) {
                 return Err(InstantiateError::Signature(function));
             }
             let arguments = arguments
                 .iter()
-                .map(|argument| visit(builder, clause, *argument, get, terms, actuals))
+                .map(|argument| visit(target, clause, *argument, get, terms, actuals))
                 .collect::<Result<SmallVec<[_; 4]>, _>>()?;
-            builder.call(function, &arguments)
+            target.call(function, &arguments)
         }
-        TermKind::Tuple(fields) => {
-            let fields: SmallVec<[_; 4]> = fields.into();
+        OwnedTerm::Tuple(fields) => {
             let fields = fields
                 .iter()
-                .map(|field| visit(builder, clause, *field, get, terms, actuals))
+                .map(|field| visit(target, clause, *field, get, terms, actuals))
                 .collect::<Result<SmallVec<[_; 4]>, _>>()?;
-            builder.tuple(&fields)
+            target.tuple(&fields)
         }
-        TermKind::Proj { tuple, field } => {
-            let tuple = visit(builder, clause, tuple, get, terms, actuals)?;
-            builder.proj(tuple, field)
+        OwnedTerm::Proj { tuple, field } => {
+            let tuple = visit(target, clause, tuple, get, terms, actuals)?;
+            target.proj(tuple, field)
         }
     };
     terms.insert(term, result);
     Ok(result)
 }
 
+enum OwnedTerm {
+    Var(Var),
+    Const,
+    Bool,
+    Unit,
+    Unary { op: crate::Uop, expr: Term },
+    Binary { op: crate::Op, lhs: Term, rhs: Term },
+    Call { function: Var, arguments: SmallVec<[Term; 4]> },
+    Tuple(SmallVec<[Term; 4]>),
+    Proj { tuple: Term, field: crate::Field },
+}
+
+fn owned_term(term: Term) -> OwnedTerm {
+    scoped!(let interners = INTERNERS);
+    let interners = interners.borrow();
+    match interners.get(term) {
+        TermDef::Var(var) => OwnedTerm::Var(var),
+        TermDef::Const(_) => OwnedTerm::Const,
+        TermDef::Bool(_) => OwnedTerm::Bool,
+        TermDef::Unit => OwnedTerm::Unit,
+        TermDef::Unary { op, expr } => OwnedTerm::Unary { op, expr },
+        TermDef::Binary { op, lhs, rhs } => OwnedTerm::Binary { op, lhs, rhs },
+        TermDef::Call { function, arguments } => {
+            OwnedTerm::Call { function, arguments: arguments.into() }
+        }
+        TermDef::Tuple(fields) => OwnedTerm::Tuple(fields.into()),
+        TermDef::Proj { tuple, field } => OwnedTerm::Proj { tuple, field },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{Actual, InstantiateError, instantiate};
-    use crate::{Context, DefStore, Environment, TermKind, contract::Clause};
+    use crate::{
+        DefStore, Environment, INTERNERS, Intern, SortDef, TermDef, contract::Clause, scope, scoped,
+    };
 
     #[test]
     fn substitutes_variables_and_renames_functions() {
-        let mut cx = Context::default();
-        let int = cx.int_sort();
-        let mut source = Environment::new();
-        let function = source.bind_function(&[int], int, 1);
-        let parameter = source.bind_value(int, 2);
-        let parameter = cx.builder(&mut source).var(parameter);
-        let term = cx.builder(&mut source).call(function, &[parameter]);
-        let clause = Clause { term, environment: source };
+        // SAFETY: this test is synchronous.
+        unsafe {
+            scope(|| {
+                let int = SortDef::Int.intern();
+                let mut source = Environment::new();
+                let function = source.bind_function(&[int], int, 1);
+                let parameter = source.bind_value(int, 2);
+                let parameter = source.var(parameter);
+                let term = source.call(function, &[parameter]);
+                let clause = Clause { term, environment: source };
 
-        let mut target = Environment::new();
-        let target_function = target.bind_function(&[int], int, "f");
-        let value = cx.builder(&mut target).int_lit(42);
-        let term = instantiate(&mut cx, &clause, &mut target, |binding| match binding {
-            1 => Some(Actual::Function(target_function)),
-            2 => Some(Actual::Value(value)),
-            _ => None,
-        })
-        .unwrap();
+                let mut target = Environment::new();
+                let target_function = target.bind_function(&[int], int, "f");
+                let value = target.int(42);
+                let term = instantiate(&clause, &target, |binding| match binding {
+                    1 => Some(Actual::Function(target_function)),
+                    2 => Some(Actual::Value(value)),
+                    _ => None,
+                })
+                .unwrap();
 
-        assert!(matches!(
-            cx.get(term).kind,
-            TermKind::Call { function, .. } if function == target_function
-        ));
+                scoped!(let interners = INTERNERS);
+                assert!(matches!(
+                    interners.borrow().get(term),
+                    TermDef::Call { function, .. } if function == target_function
+                ));
+            })
+        }
     }
 
     #[test]
     fn reports_unbound_variables() {
-        let mut cx = Context::default();
-        let int = cx.int_sort();
-        let mut source = Environment::new();
-        let var = source.bind_value(int, 7);
-        let term = cx.builder(&mut source).var(var);
-        let clause = Clause { term, environment: source };
-        let mut target = Environment::<()>::new();
-
-        assert_eq!(
-            instantiate(&mut cx, &clause, &mut target, |_| None),
-            Err(InstantiateError::Unbound(7))
-        );
+        // SAFETY: this test is synchronous.
+        unsafe {
+            scope(|| {
+                let int = SortDef::Int.intern();
+                let mut source = Environment::new();
+                let var = source.bind_value(int, 7);
+                let term = source.var(var);
+                let clause = Clause { term, environment: source };
+                let target = Environment::<()>::new();
+                assert_eq!(
+                    instantiate(&clause, &target, |_| None),
+                    Err(InstantiateError::Unbound(7))
+                );
+            })
+        }
     }
 }

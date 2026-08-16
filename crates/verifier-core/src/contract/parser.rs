@@ -1,6 +1,6 @@
 use std::{fmt, ops::Range};
 
-use crate::{Context, DefStore, Environment, Op, Sort, SortDef, Term};
+use crate::{DefStore, Environment, INTERNERS, Op, Sort, SortDef, Term, scoped};
 
 use super::Clause;
 
@@ -190,25 +190,24 @@ impl<'a> Lexer<'a> {
     }
 }
 
-struct Parser<'a, 'c, B, F> {
-    cx: &'c mut Context,
+struct Parser<'a, B, F> {
     lexer: Lexer<'a>,
     current: Lexed<'a>,
     resolve: F,
     environment: Environment<B>,
 }
 
-pub fn parse<B, F>(cx: &mut Context, text: &str, resolve: F) -> Result<Clause<B>, ParseError>
+pub fn parse<B, F>(text: &str, resolve: F) -> Result<Clause<B>, ParseError>
 where
     B: Copy + Eq,
     F: FnMut(&str) -> Result<(Sort, B), ResolveError>,
 {
     let mut lexer = Lexer { text, pos: 0 };
     let current = lexer.next()?;
-    Parser { cx, lexer, current, resolve, environment: Environment::new() }.parse()
+    Parser { lexer, current, resolve, environment: Environment::new() }.parse()
 }
 
-impl<B, F> Parser<'_, '_, B, F>
+impl<B, F> Parser<'_, B, F>
 where
     B: Copy + Eq,
     F: FnMut(&str) -> Result<(Sort, B), ResolveError>,
@@ -228,7 +227,7 @@ where
             self.require(lhs, SortDef::Bool)?;
             let rhs = self.implies()?;
             self.require(rhs, SortDef::Bool)?;
-            Ok(self.build().implies(lhs, rhs))
+            Ok(self.environment.implies(lhs, rhs))
         } else {
             Ok(lhs)
         }
@@ -240,7 +239,7 @@ where
             self.require(lhs, SortDef::Bool)?;
             let rhs = self.and()?;
             self.require(rhs, SortDef::Bool)?;
-            lhs = self.build().or(lhs, rhs);
+            lhs = self.environment.or(lhs, rhs);
         }
         Ok(lhs)
     }
@@ -251,7 +250,7 @@ where
             self.require(lhs, SortDef::Bool)?;
             let rhs = self.comparison()?;
             self.require(rhs, SortDef::Bool)?;
-            lhs = self.build().and(lhs, rhs);
+            lhs = self.environment.and(lhs, rhs);
         }
         Ok(lhs)
     }
@@ -275,7 +274,7 @@ where
         if !matches!(op, Op::Eq | Op::Ne) {
             self.require(lhs, SortDef::Int)?;
         }
-        Ok(self.build().binary(op, lhs, rhs))
+        Ok(self.environment.binary(op, lhs, rhs))
     }
 
     fn additive(&mut self) -> Result<Term, ParseError> {
@@ -290,7 +289,7 @@ where
             self.require(lhs, SortDef::Int)?;
             let rhs = self.multiplicative()?;
             self.require(rhs, SortDef::Int)?;
-            lhs = self.build().binary(op, lhs, rhs);
+            lhs = self.environment.binary(op, lhs, rhs);
         }
     }
 
@@ -300,7 +299,7 @@ where
             self.require(lhs, SortDef::Int)?;
             let rhs = self.unary()?;
             self.require(rhs, SortDef::Int)?;
-            lhs = self.build().mul(lhs, rhs);
+            lhs = self.environment.mul(lhs, rhs);
         }
         Ok(lhs)
     }
@@ -309,12 +308,12 @@ where
         if self.take(Token::Bang)? {
             let term = self.unary()?;
             self.require(term, SortDef::Bool)?;
-            return Ok(self.build().not(term));
+            return Ok(self.environment.not(term));
         }
         if self.take(Token::Minus)? {
             let term = self.unary()?;
             self.require(term, SortDef::Int)?;
-            return Ok(self.build().neg(term));
+            return Ok(self.environment.neg(term));
         }
         self.atom()
     }
@@ -324,11 +323,11 @@ where
         match token {
             Token::Int(value) => {
                 self.bump()?;
-                Ok(self.build().int_lit(value))
+                Ok(self.environment.int(value))
             }
             Token::True | Token::False => {
                 self.bump()?;
-                Ok(self.build().bool_lit(token == Token::True))
+                Ok(self.environment.bool(token == Token::True))
             }
             Token::Ident(name) => {
                 self.bump()?;
@@ -362,7 +361,7 @@ where
                         self.environment.bind_value(sort, binding)
                     }
                 };
-                Ok(self.build().var(var))
+                Ok(self.environment.var(var))
             }
             Token::LParen => {
                 self.bump()?;
@@ -392,7 +391,8 @@ where
 
     fn require(&mut self, term: Term, expected: SortDef<'_>) -> Result<(), ParseError> {
         let sort = self.term_sort(term);
-        if self.cx.get(sort) == expected {
+        scoped!(let interners = INTERNERS);
+        if interners.borrow().get(sort) == expected {
             Ok(())
         } else {
             self.error(match expected {
@@ -403,12 +403,8 @@ where
         }
     }
 
-    fn build(&mut self) -> crate::Builder<'_, B> {
-        self.cx.builder(&mut self.environment)
-    }
-
-    fn term_sort(&mut self, term: Term) -> Sort {
-        self.build().term_sort(term)
+    fn term_sort(&self, term: Term) -> Sort {
+        self.environment.sort(term).expect("parser only constructs checked terms")
     }
 
     fn take(&mut self, token: Token<'_>) -> Result<bool, ParseError> {
@@ -436,60 +432,77 @@ where
 #[cfg(test)]
 mod tests {
     use super::{ParseErrorKind, ResolveError, parse};
-    use crate::{Context, DefStore, Op, TermKind};
+    use crate::{DefStore, INTERNERS, Intern, Op, SortDef, TermDef, scope, scoped};
 
     #[test]
     fn parses_directly_into_terms() {
-        let mut cx = Context::default();
-        let int = cx.int_sort();
-        let clause = parse(&mut cx, "x >= 0 ==> result >= x", |name| match name {
-            "x" => Ok((int, 1)),
-            "result" => Ok((int, 2)),
-            _ => Err(ResolveError::Unknown),
-        })
-        .unwrap();
+        // SAFETY: this test is synchronous.
+        unsafe {
+            scope(|| {
+                let int = SortDef::Int.intern();
+                let clause = parse("x >= 0 ==> result >= x", |name| match name {
+                    "x" => Ok((int, 1)),
+                    "result" => Ok((int, 2)),
+                    _ => Err(ResolveError::Unknown),
+                })
+                .unwrap();
 
-        assert!(matches!(cx.get(clause.term).kind, TermKind::Binary { op: Op::Implies, .. }));
-        assert_eq!(
-            clause.environment.iter().map(|(_, _, binding)| *binding).collect::<Vec<_>>(),
-            [1, 2]
-        );
+                scoped!(let interners = INTERNERS);
+                assert!(matches!(
+                    interners.borrow().get(clause.term),
+                    TermDef::Binary { op: Op::Implies, .. }
+                ));
+                assert_eq!(
+                    clause.environment.iter().map(|(_, _, binding)| *binding).collect::<Vec<_>>(),
+                    [1, 2]
+                );
+            })
+        }
     }
 
     #[test]
     fn renamed_variables_reuse_terms() {
-        let mut cx = Context::default();
-        let int = cx.int_sort();
-        let x = parse(&mut cx, "x >= 0", |_| Ok((int, 1))).unwrap();
-        let value = parse(&mut cx, "value >= 0", |_| Ok((int, 2))).unwrap();
-
-        assert_eq!(value.term, x.term);
-        assert_ne!(value.environment, x.environment);
+        // SAFETY: this test is synchronous.
+        unsafe {
+            scope(|| {
+                let int = SortDef::Int.intern();
+                let x = parse("x >= 0", |_| Ok((int, 1))).unwrap();
+                let value = parse("value >= 0", |_| Ok((int, 2))).unwrap();
+                assert_eq!(value.term, x.term);
+                assert_ne!(value.environment, x.environment);
+            })
+        }
     }
 
     #[test]
     fn reports_errors_by_kind_and_range() {
-        let mut cx = Context::default();
-        let error =
-            parse::<u8, _>(&mut cx, "missing >= 0", |_| Err(ResolveError::Unknown)).unwrap_err();
-
-        assert_eq!(error.range, 0..7);
-        assert_eq!(error.kind, ParseErrorKind::Unknown("missing".to_owned()));
+        // SAFETY: this test is synchronous.
+        unsafe {
+            scope(|| {
+                let error =
+                    parse::<u8, _>("missing >= 0", |_| Err(ResolveError::Unknown)).unwrap_err();
+                assert_eq!(error.range, 0..7);
+                assert_eq!(error.kind, ParseErrorKind::Unknown("missing".to_owned()));
+            })
+        }
     }
 
     #[test]
     fn rejects_one_binding_at_two_sorts() {
-        let mut cx = Context::default();
-        let int = cx.int_sort();
-        let bool = cx.bool_sort();
-        let error = parse(&mut cx, "x == y", |name| match name {
-            "x" => Ok((int, 1)),
-            "y" => Ok((bool, 1)),
-            _ => Err(ResolveError::Unknown),
-        })
-        .unwrap_err();
-
-        assert_eq!(error.range, 5..6);
-        assert_eq!(error.kind, ParseErrorKind::Inconsistent("y".to_owned()));
+        // SAFETY: this test is synchronous.
+        unsafe {
+            scope(|| {
+                let int = SortDef::Int.intern();
+                let bool = SortDef::Bool.intern();
+                let error = parse("x == y", |name| match name {
+                    "x" => Ok((int, 1)),
+                    "y" => Ok((bool, 1)),
+                    _ => Err(ResolveError::Unknown),
+                })
+                .unwrap_err();
+                assert_eq!(error.range, 5..6);
+                assert_eq!(error.kind, ParseErrorKind::Inconsistent("y".to_owned()));
+            })
+        }
     }
 }

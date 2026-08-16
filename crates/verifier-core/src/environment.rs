@@ -1,11 +1,12 @@
-use std::fmt;
+use std::{cell::RefCell, fmt};
 
 use hashbrown::HashMap;
 use index_vec::IndexVec;
 use smallvec::SmallVec;
 
 use crate::{
-    Context, DefStore, Field, Fields, Op, Sort, SortDef, Term, TermDef, TermKind, Uop, Var,
+    Declaration::{Function, Value},
+    DefStore, Field, Fields, INTERNERS, Intern, Op, Sort, SortDef, Term, TermDef, Uop, Var, scoped,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -15,27 +16,65 @@ pub enum Declaration {
     Function { domain: SmallVec<[Sort; 2]>, range: Sort },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TypeError {
+    UnknownVariable(Var),
+    FunctionAsValue(Var),
+    ValueAsFunction(Var),
+    Arity { function: Var, expected: usize, actual: usize },
+    Sort { expected: Sort, actual: Sort },
+    Equality { lhs: Sort, rhs: Sort },
+    ExpectedTuple(Sort),
+    MissingField { sort: Sort, field: Field },
+}
+
+impl fmt::Display for TypeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnknownVariable(var) => write!(f, "unknown variable {var:?}"),
+            Self::FunctionAsValue(var) => write!(f, "function {var:?} used as a value"),
+            Self::ValueAsFunction(var) => write!(f, "value {var:?} called as a function"),
+            Self::Arity { function, expected, actual } => write!(
+                f,
+                "function {function:?} expects {expected} arguments but received {actual}"
+            ),
+            Self::Sort { expected, actual } => {
+                write!(f, "expected sort {expected:?}, found {actual:?}")
+            }
+            Self::Equality { lhs, rhs } => {
+                write!(f, "equality operands have different sorts {lhs:?} and {rhs:?}")
+            }
+            Self::ExpectedTuple(sort) => write!(f, "expected a tuple, found sort {sort:?}"),
+            Self::MissingField { sort, field } => {
+                write!(f, "tuple sort {sort:?} has no field {field:?}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for TypeError {}
+
 /// The declarations and frontend bindings under which terms are scoped and typed.
 ///
 /// Entries are append-only, so adding a fresh variable does not reinterpret existing terms.
 /// Sorts are cached per environment because one interned term may have different sorts under
-/// different environments.
+/// different environments. The cache is derived data, so typed construction only needs `&self`.
 pub struct Environment<B> {
     entries: IndexVec<Var, (Declaration, B)>,
-    sorts: HashMap<Term, Sort>,
+    sorts: RefCell<HashMap<Term, Sort>>,
 }
 
 impl<B> Environment<B> {
     pub fn new() -> Self {
-        Self { entries: IndexVec::new(), sorts: HashMap::new() }
+        Self { entries: IndexVec::new(), sorts: RefCell::new(HashMap::new()) }
     }
 
     pub fn bind_value(&mut self, sort: Sort, binding: B) -> Var {
-        self.entries.push((Declaration::Value(sort), binding))
+        self.entries.push((Value(sort), binding))
     }
 
     pub fn bind_function(&mut self, domain: &[Sort], range: Sort, binding: B) -> Var {
-        self.entries.push((Declaration::Function { domain: domain.into(), range }, binding))
+        self.entries.push((Function { domain: domain.into(), range }, binding))
     }
 
     pub fn declaration(&self, var: Var) -> &Declaration {
@@ -65,17 +104,224 @@ impl<B> Environment<B> {
     }
 
     pub(crate) fn cached_sort(&self, term: Term) -> Option<Sort> {
-        self.sorts.get(&term).copied()
+        self.sorts.borrow().get(&term).copied()
     }
 
-    pub(crate) fn cached_sorts(&self) -> impl Iterator<Item = Sort> + '_ {
-        self.sorts.values().copied()
+    pub(crate) fn cached_sorts(&self) -> Vec<Sort> {
+        self.sorts.borrow().values().copied().collect()
     }
 
-    fn remember(&mut self, term: Term, sort: Sort) {
-        if let Some(previous) = self.sorts.insert(term, sort) {
+    fn remember(&self, term: Term, sort: Sort) {
+        if let Some(previous) = self.sorts.borrow_mut().insert(term, sort) {
             assert_eq!(previous, sort, "term has inconsistent sorts in one environment");
         }
+    }
+
+    /// Checks and returns a term's sort under this environment.
+    ///
+    /// Terms constructed or previously checked under the environment are O(1) lookups.
+    pub fn sort(&self, term: Term) -> Result<Sort, TypeError> {
+        if let Some(sort) = self.cached_sort(term) {
+            return Ok(sort);
+        }
+
+        let sort = match owned_term(term) {
+            OwnedTerm::Var(var) => match self.get(var).map(|entry| entry.0) {
+                Some(Value(sort)) => *sort,
+                Some(Function { .. }) => return Err(TypeError::FunctionAsValue(var)),
+                None => return Err(TypeError::UnknownVariable(var)),
+            },
+            OwnedTerm::Const => int_sort(),
+            OwnedTerm::Bool => bool_sort(),
+            OwnedTerm::Unit => unit_sort(),
+            OwnedTerm::Binary { op, lhs, rhs } => self.binary_sort(op, lhs, rhs)?,
+            OwnedTerm::Unary { op, expr } => self.unary_sort(op, expr)?,
+            OwnedTerm::Call { function, arguments } => self.call_sort(function, &arguments)?,
+            OwnedTerm::Tuple(fields) => {
+                let sorts = fields
+                    .iter()
+                    .map(|field| self.sort(*field))
+                    .collect::<Result<SmallVec<[_; 4]>, _>>()?;
+                tuple_sort(&sorts)
+            }
+            OwnedTerm::Proj { tuple, field } => self.projection_sort(tuple, field)?,
+        };
+        self.remember(term, sort);
+        Ok(sort)
+    }
+
+    fn term(&self, sort: Sort, definition: TermDef<'_>) -> Term {
+        let term = definition.intern();
+        self.remember(term, sort);
+        term
+    }
+
+    pub fn var(&self, var: Var) -> Term {
+        let sort = match self.declaration(var) {
+            Value(sort) => *sort,
+            Function { .. } => panic!("function used as a value"),
+        };
+        self.term(sort, TermDef::Var(var))
+    }
+
+    pub fn int(&self, value: i128) -> Term {
+        self.term(int_sort(), TermDef::Const(value))
+    }
+
+    pub fn bool(&self, value: bool) -> Term {
+        self.term(bool_sort(), TermDef::Bool(value))
+    }
+
+    pub fn unit(&self) -> Term {
+        self.term(unit_sort(), TermDef::Unit)
+    }
+
+    pub fn tuple(&self, fields: &[Term]) -> Term {
+        if fields.is_empty() {
+            return self.unit();
+        }
+        let sorts = fields
+            .iter()
+            .map(|field| self.sort(*field).expect("checked tuple field"))
+            .collect::<SmallVec<[_; 4]>>();
+        self.term(tuple_sort(&sorts), TermDef::Tuple(Fields::new(fields)))
+    }
+
+    pub fn proj(&self, tuple: Term, field: impl Into<Field>) -> Term {
+        let field = field.into();
+        if let OwnedTerm::Tuple(fields) = owned_term(tuple) {
+            return fields[field.index()];
+        }
+        let sort = self.projection_sort(tuple, field).expect("checked tuple projection");
+        self.term(sort, TermDef::Proj { tuple, field })
+    }
+
+    fn projection_sort(&self, tuple: Term, field: Field) -> Result<Sort, TypeError> {
+        let tuple = self.sort(tuple)?;
+        match owned_sort(tuple) {
+            OwnedSort::Tuple(fields) => fields
+                .get(field.index())
+                .copied()
+                .ok_or(TypeError::MissingField { sort: tuple, field }),
+            _ => Err(TypeError::ExpectedTuple(tuple)),
+        }
+    }
+
+    pub fn call(&self, function: Var, arguments: &[Term]) -> Term {
+        let sort = self.call_sort(function, arguments).expect("checked function call");
+        self.term(sort, TermDef::Call { function, arguments: Fields::new(arguments) })
+    }
+
+    fn call_sort(&self, function: Var, arguments: &[Term]) -> Result<Sort, TypeError> {
+        let Some((declaration, _)) = self.get(function) else {
+            return Err(TypeError::UnknownVariable(function));
+        };
+        let Function { domain, range } = declaration else {
+            return Err(TypeError::ValueAsFunction(function));
+        };
+        if arguments.len() != domain.len() {
+            return Err(TypeError::Arity {
+                function,
+                expected: domain.len(),
+                actual: arguments.len(),
+            });
+        }
+        for (argument, expected) in arguments.iter().zip(domain) {
+            self.expect_sort(*argument, *expected)?;
+        }
+        Ok(*range)
+    }
+
+    pub fn binary(&self, op: Op, lhs: Term, rhs: Term) -> Term {
+        let sort = self.binary_sort(op, lhs, rhs).expect("checked binary expression");
+        self.term(sort, TermDef::Binary { op, lhs, rhs })
+    }
+
+    fn binary_sort(&self, op: Op, lhs: Term, rhs: Term) -> Result<Sort, TypeError> {
+        let lhs = self.sort(lhs)?;
+        let rhs = self.sort(rhs)?;
+        let int = int_sort();
+        let bool = bool_sort();
+        match op {
+            Op::Add | Op::Sub | Op::Mul | Op::Lt | Op::Le | Op::Gt | Op::Ge => {
+                expect(lhs, int)?;
+                expect(rhs, int)?;
+                Ok(if matches!(op, Op::Add | Op::Sub | Op::Mul) { int } else { bool })
+            }
+            Op::Eq | Op::Ne => {
+                if lhs != rhs {
+                    return Err(TypeError::Equality { lhs, rhs });
+                }
+                Ok(bool)
+            }
+            Op::And | Op::Or | Op::Implies => {
+                expect(lhs, bool)?;
+                expect(rhs, bool)?;
+                Ok(bool)
+            }
+        }
+    }
+
+    pub fn unary(&self, op: Uop, expr: Term) -> Term {
+        let sort = self.unary_sort(op, expr).expect("checked unary expression");
+        self.term(sort, TermDef::Unary { op, expr })
+    }
+
+    fn unary_sort(&self, op: Uop, expr: Term) -> Result<Sort, TypeError> {
+        let operand = self.sort(expr)?;
+        let expected = match op {
+            Uop::Not => bool_sort(),
+            Uop::Neg => int_sort(),
+        };
+        expect(operand, expected)?;
+        Ok(expected)
+    }
+
+    fn expect_sort(&self, term: Term, expected: Sort) -> Result<(), TypeError> {
+        expect(self.sort(term)?, expected)
+    }
+
+    pub fn add(&self, lhs: Term, rhs: Term) -> Term {
+        self.binary(Op::Add, lhs, rhs)
+    }
+    pub fn sub(&self, lhs: Term, rhs: Term) -> Term {
+        self.binary(Op::Sub, lhs, rhs)
+    }
+    pub fn mul(&self, lhs: Term, rhs: Term) -> Term {
+        self.binary(Op::Mul, lhs, rhs)
+    }
+    pub fn eq(&self, lhs: Term, rhs: Term) -> Term {
+        self.binary(Op::Eq, lhs, rhs)
+    }
+    pub fn ne(&self, lhs: Term, rhs: Term) -> Term {
+        self.binary(Op::Ne, lhs, rhs)
+    }
+    pub fn lt(&self, lhs: Term, rhs: Term) -> Term {
+        self.binary(Op::Lt, lhs, rhs)
+    }
+    pub fn le(&self, lhs: Term, rhs: Term) -> Term {
+        self.binary(Op::Le, lhs, rhs)
+    }
+    pub fn gt(&self, lhs: Term, rhs: Term) -> Term {
+        self.binary(Op::Gt, lhs, rhs)
+    }
+    pub fn ge(&self, lhs: Term, rhs: Term) -> Term {
+        self.binary(Op::Ge, lhs, rhs)
+    }
+    pub fn and(&self, lhs: Term, rhs: Term) -> Term {
+        self.binary(Op::And, lhs, rhs)
+    }
+    pub fn or(&self, lhs: Term, rhs: Term) -> Term {
+        self.binary(Op::Or, lhs, rhs)
+    }
+    pub fn implies(&self, lhs: Term, rhs: Term) -> Term {
+        self.binary(Op::Implies, lhs, rhs)
+    }
+    pub fn not(&self, expr: Term) -> Term {
+        self.unary(Uop::Not, expr)
+    }
+    pub fn neg(&self, expr: Term) -> Term {
+        self.unary(Uop::Neg, expr)
     }
 }
 
@@ -87,7 +333,7 @@ impl<B> Default for Environment<B> {
 
 impl<B: Clone> Clone for Environment<B> {
     fn clone(&self) -> Self {
-        Self { entries: self.entries.clone(), sorts: self.sorts.clone() }
+        Self { entries: self.entries.clone(), sorts: RefCell::new(self.sorts.borrow().clone()) }
     }
 }
 
@@ -105,230 +351,68 @@ impl<B: PartialEq> PartialEq for Environment<B> {
 
 impl<B: Eq> Eq for Environment<B> {}
 
-/// Typed term construction under one environment.
-pub struct Builder<'a, B> {
-    context: &'a mut Context,
-    environment: &'a mut Environment<B>,
+fn int_sort() -> Sort {
+    SortDef::Int.intern()
 }
 
-impl Context {
-    pub fn builder<'a, B>(&'a mut self, environment: &'a mut Environment<B>) -> Builder<'a, B> {
-        Builder { context: self, environment }
-    }
+fn bool_sort() -> Sort {
+    SortDef::Bool.intern()
+}
 
-    pub fn int_sort(&mut self) -> Sort {
-        self.intern_sort(SortDef::Int)
-    }
+fn unit_sort() -> Sort {
+    tuple_sort(&[])
+}
 
-    pub fn bool_sort(&mut self) -> Sort {
-        self.intern_sort(SortDef::Bool)
-    }
+fn tuple_sort(fields: &[Sort]) -> Sort {
+    SortDef::Tuple(Fields::new(fields)).intern()
+}
 
-    pub fn unit_sort(&mut self) -> Sort {
-        self.tuple_sort(&[])
-    }
+fn expect(actual: Sort, expected: Sort) -> Result<(), TypeError> {
+    if actual == expected { Ok(()) } else { Err(TypeError::Sort { expected, actual }) }
+}
 
-    pub fn tuple_sort(&mut self, fields: &[Sort]) -> Sort {
-        self.intern_sort(SortDef::Tuple(Fields::new(fields)))
+enum OwnedTerm {
+    Var(Var),
+    Const,
+    Bool,
+    Unit,
+    Binary { op: Op, lhs: Term, rhs: Term },
+    Unary { op: Uop, expr: Term },
+    Call { function: Var, arguments: SmallVec<[Term; 4]> },
+    Tuple(SmallVec<[Term; 4]>),
+    Proj { tuple: Term, field: Field },
+}
+
+fn owned_term(term: Term) -> OwnedTerm {
+    scoped!(let interners = INTERNERS);
+    let interners = interners.borrow();
+    match interners.get(term) {
+        TermDef::Var(var) => OwnedTerm::Var(var),
+        TermDef::Const(_) => OwnedTerm::Const,
+        TermDef::Bool(_) => OwnedTerm::Bool,
+        TermDef::Unit => OwnedTerm::Unit,
+        TermDef::Binary { op, lhs, rhs } => OwnedTerm::Binary { op, lhs, rhs },
+        TermDef::Unary { op, expr } => OwnedTerm::Unary { op, expr },
+        TermDef::Call { function, arguments } => {
+            OwnedTerm::Call { function, arguments: arguments.into() }
+        }
+        TermDef::Tuple(fields) => OwnedTerm::Tuple(fields.into()),
+        TermDef::Proj { tuple, field } => OwnedTerm::Proj { tuple, field },
     }
 }
 
-macro_rules! binary_builders {
-    ($($name:ident: $op:ident;)*) => {$(
-        pub fn $name(&mut self, lhs: Term, rhs: Term) -> Term {
-            self.binary(Op::$op, lhs, rhs)
-        }
-    )*};
+enum OwnedSort {
+    Int,
+    Bool,
+    Tuple(SmallVec<[Sort; 4]>),
 }
 
-impl<B> Builder<'_, B> {
-    pub fn context(&self) -> &Context {
-        self.context
-    }
-
-    pub fn environment(&self) -> &Environment<B> {
-        self.environment
-    }
-
-    /// Returns the term's sort under this environment.
-    ///
-    /// Terms constructed or previously checked under the environment are expected O(1) lookups.
-    pub fn term_sort(&mut self, term: Term) -> Sort {
-        if let Some(sort) = self.environment.cached_sort(term) {
-            return sort;
-        }
-
-        let sort = match self.context.get(term).kind {
-            TermKind::Var(var) => match self.environment.declaration(var) {
-                Declaration::Value(sort) => *sort,
-                Declaration::Function { .. } => panic!("function used as a value"),
-            },
-            TermKind::Const(_) => self.context.int_sort(),
-            TermKind::Bool(_) => self.context.bool_sort(),
-            TermKind::Unit => self.context.unit_sort(),
-            TermKind::Binary { op, lhs, rhs } => self.binary_sort(op, lhs, rhs),
-            TermKind::Unary { op, expr } => self.unary_sort(op, expr),
-            TermKind::Call { function, arguments } => {
-                let arguments: SmallVec<[_; 4]> = arguments.into();
-                self.call_sort(function, &arguments)
-            }
-            TermKind::Tuple(fields) => {
-                let fields: SmallVec<[_; 4]> = fields.into();
-                let sorts: SmallVec<[_; 4]> =
-                    fields.iter().map(|field| self.term_sort(*field)).collect();
-                self.context.tuple_sort(&sorts)
-            }
-            TermKind::Proj { tuple, field } => {
-                let tuple = self.term_sort(tuple);
-                match self.context.get(tuple) {
-                    SortDef::Tuple(fields) => fields[field],
-                    _ => panic!("projection from non-tuple term"),
-                }
-            }
-        };
-        self.environment.remember(term, sort);
-        sort
-    }
-
-    fn term(&mut self, sort: Sort, kind: TermKind<'_>) -> Term {
-        let term = self.context.intern_term(TermDef { kind });
-        self.environment.remember(term, sort);
-        term
-    }
-
-    pub fn var(&mut self, var: Var) -> Term {
-        let sort = match self.environment.declaration(var) {
-            Declaration::Value(sort) => *sort,
-            Declaration::Function { .. } => panic!("function used as a value"),
-        };
-        self.term(sort, TermKind::Var(var))
-    }
-
-    pub fn int_lit(&mut self, value: i128) -> Term {
-        let sort = self.context.int_sort();
-        self.term(sort, TermKind::Const(value))
-    }
-
-    pub fn bool_lit(&mut self, value: bool) -> Term {
-        let sort = self.context.bool_sort();
-        self.term(sort, TermKind::Bool(value))
-    }
-
-    pub fn unit(&mut self) -> Term {
-        let sort = self.context.unit_sort();
-        self.term(sort, TermKind::Unit)
-    }
-
-    pub fn tuple(&mut self, fields: &[Term]) -> Term {
-        if fields.is_empty() {
-            return self.unit();
-        }
-        let sorts: SmallVec<[_; 4]> = fields.iter().map(|field| self.term_sort(*field)).collect();
-        let sort = self.context.tuple_sort(&sorts);
-        self.term(sort, TermKind::Tuple(Fields::new(fields)))
-    }
-
-    pub fn proj(&mut self, tuple: Term, field: impl Into<Field>) -> Term {
-        let field = field.into();
-        if let TermKind::Tuple(fields) = self.context.get(tuple).kind {
-            return fields[field];
-        }
-        let tuple_sort = self.term_sort(tuple);
-        let sort = match self.context.get(tuple_sort) {
-            SortDef::Tuple(fields) => fields[field],
-            _ => panic!("projection from non-tuple term"),
-        };
-        self.term(sort, TermKind::Proj { tuple, field })
-    }
-
-    pub fn call(&mut self, function: Var, arguments: &[Term]) -> Term {
-        let sort = self.call_sort(function, arguments);
-        self.term(sort, TermKind::Call { function, arguments: Fields::new(arguments) })
-    }
-
-    fn call_sort(&mut self, function: Var, arguments: &[Term]) -> Sort {
-        let (domain, range) = match self.environment.declaration(function).clone() {
-            Declaration::Function { domain, range } => (domain, range),
-            Declaration::Value(_) => panic!("value called as a function"),
-        };
-        assert_eq!(arguments.len(), domain.len(), "function argument count mismatch");
-        for (argument, expected) in arguments.iter().zip(domain) {
-            assert_eq!(self.term_sort(*argument), expected, "function argument sort mismatch");
-        }
-        range
-    }
-
-    pub fn binary(&mut self, op: Op, lhs: Term, rhs: Term) -> Term {
-        let sort = self.binary_sort(op, lhs, rhs);
-        self.term(sort, TermKind::Binary { op, lhs, rhs })
-    }
-
-    fn binary_sort(&mut self, op: Op, lhs: Term, rhs: Term) -> Sort {
-        let lhs = self.term_sort(lhs);
-        let rhs = self.term_sort(rhs);
-        let int = self.context.int_sort();
-        let bool = self.context.bool_sort();
-        match op {
-            Op::Add | Op::Sub | Op::Mul => {
-                assert_eq!((lhs, rhs), (int, int), "integer operation sort mismatch");
-                int
-            }
-            Op::Eq | Op::Ne => {
-                assert_eq!(lhs, rhs, "equality sort mismatch");
-                bool
-            }
-            Op::Lt | Op::Le | Op::Gt | Op::Ge => {
-                assert_eq!((lhs, rhs), (int, int), "comparison sort mismatch");
-                bool
-            }
-            Op::And | Op::Or | Op::Implies => {
-                assert_eq!((lhs, rhs), (bool, bool), "boolean operation sort mismatch");
-                bool
-            }
-        }
-    }
-
-    binary_builders! {
-        add: Add;
-        sub: Sub;
-        mul: Mul;
-        eq: Eq;
-        ne: Ne;
-        lt: Lt;
-        le: Le;
-        gt: Gt;
-        ge: Ge;
-        and: And;
-        or: Or;
-        implies: Implies;
-    }
-
-    pub fn unary(&mut self, op: Uop, expr: Term) -> Term {
-        let sort = self.unary_sort(op, expr);
-        self.term(sort, TermKind::Unary { op, expr })
-    }
-
-    fn unary_sort(&mut self, op: Uop, expr: Term) -> Sort {
-        let operand = self.term_sort(expr);
-        let int = self.context.int_sort();
-        let bool = self.context.bool_sort();
-        match op {
-            Uop::Not => {
-                assert_eq!(operand, bool, "boolean negation sort mismatch");
-                bool
-            }
-            Uop::Neg => {
-                assert_eq!(operand, int, "integer negation sort mismatch");
-                int
-            }
-        }
-    }
-
-    pub fn not(&mut self, expr: Term) -> Term {
-        self.unary(Uop::Not, expr)
-    }
-
-    pub fn neg(&mut self, expr: Term) -> Term {
-        self.unary(Uop::Neg, expr)
+fn owned_sort(sort: Sort) -> OwnedSort {
+    scoped!(let interners = INTERNERS);
+    let interners = interners.borrow();
+    match interners.get(sort) {
+        SortDef::Int => OwnedSort::Int,
+        SortDef::Bool => OwnedSort::Bool,
+        SortDef::Tuple(fields) => OwnedSort::Tuple(fields.into()),
     }
 }

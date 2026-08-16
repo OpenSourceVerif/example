@@ -6,7 +6,19 @@ use crate::solver;
 
 pub(crate) fn obligations(tcx: TyCtxt<'_>, name: &str, verification: &Verification) {
     for (index, obligation) in verification.obligations.iter().enumerate() {
-        let script = smt(&verification.cx, &verification.environment, obligation.condition);
+        let script = match smt(&verification.environment, obligation.condition) {
+            Ok(script) => script,
+            Err(error) => {
+                tcx.dcx().span_err(
+                    obligation.span,
+                    format!(
+                        "{name}: {:?} {index}: ill-sorted obligation: {error}",
+                        obligation.kind
+                    ),
+                );
+                continue;
+            }
+        };
         match solver::check(&script) {
             Ok(None) => {}
             Ok(Some(model)) => {

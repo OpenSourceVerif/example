@@ -1,6 +1,6 @@
 use interner::{List, ListInterner};
 
-use crate::{Field, Fields, Op, Sort, SortDef, Term, TermDef, TermKind, Uop, Var};
+use crate::{Field, Fields, Op, Sort, SortDef, Term, TermDef, Uop, Var};
 
 use TermKindStored as Stored;
 
@@ -31,37 +31,37 @@ pub(super) enum SortDefStored {
 
 impl TermDefStored {
     pub(super) fn store(term: TermDef<'_>, lists: &mut ListInterner<Term>) -> Self {
-        let kind = match term.kind {
-            TermKind::Var(var) => Stored::Var(var),
-            TermKind::Const(value) => Stored::Const(value),
-            TermKind::Bool(value) => Stored::Bool(value),
-            TermKind::Unit => Stored::Unit,
-            TermKind::Binary { op, lhs, rhs } => Stored::Binary { op, lhs, rhs },
-            TermKind::Unary { op, expr } => Stored::Unary { op, expr },
-            TermKind::Call { function, arguments } => {
+        let kind = match term {
+            TermDef::Var(var) => Stored::Var(var),
+            TermDef::Const(value) => Stored::Const(value),
+            TermDef::Bool(value) => Stored::Bool(value),
+            TermDef::Unit => Stored::Unit,
+            TermDef::Binary { op, lhs, rhs } => Stored::Binary { op, lhs, rhs },
+            TermDef::Unary { op, expr } => Stored::Unary { op, expr },
+            TermDef::Call { function, arguments } => {
                 Stored::Call { function, arguments: lists.intern(arguments.as_ref()) }
             }
-            TermKind::Tuple(fields) => Stored::Tuple(lists.intern(fields.as_ref())),
-            TermKind::Proj { tuple, field } => Stored::Proj { tuple, field },
+            TermDef::Tuple(fields) => Stored::Tuple(lists.intern(fields.as_ref())),
+            TermDef::Proj { tuple, field } => Stored::Proj { tuple, field },
         };
         Self { kind }
     }
 
     pub(super) fn borrow(self, lists: &ListInterner<Term>) -> TermDef<'_> {
         let kind = match self.kind {
-            Stored::Var(var) => TermKind::Var(var),
-            Stored::Const(value) => TermKind::Const(value),
-            Stored::Bool(value) => TermKind::Bool(value),
-            Stored::Unit => TermKind::Unit,
-            Stored::Binary { op, lhs, rhs } => TermKind::Binary { op, lhs, rhs },
-            Stored::Unary { op, expr } => TermKind::Unary { op, expr },
+            Stored::Var(var) => TermDef::Var(var),
+            Stored::Const(value) => TermDef::Const(value),
+            Stored::Bool(value) => TermDef::Bool(value),
+            Stored::Unit => TermDef::Unit,
+            Stored::Binary { op, lhs, rhs } => TermDef::Binary { op, lhs, rhs },
+            Stored::Unary { op, expr } => TermDef::Unary { op, expr },
             Stored::Call { function, arguments } => {
-                TermKind::Call { function, arguments: Fields::new(&lists[arguments]) }
+                TermDef::Call { function, arguments: Fields::new(&lists[arguments]) }
             }
-            Stored::Tuple(fields) => TermKind::Tuple(Fields::new(&lists[fields])),
-            Stored::Proj { tuple, field } => TermKind::Proj { tuple, field },
+            Stored::Tuple(fields) => TermDef::Tuple(Fields::new(&lists[fields])),
+            Stored::Proj { tuple, field } => TermDef::Proj { tuple, field },
         };
-        TermDef { kind }
+        kind
     }
 }
 

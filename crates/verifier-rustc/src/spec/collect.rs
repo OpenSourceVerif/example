@@ -15,7 +15,7 @@ use rustc_middle::{
 };
 use rustc_span::{BytePos, Span, Spanned, Symbol};
 use verifier_core::{
-    Context, Sort,
+    Sort,
     contract::{ResolveError, parse},
 };
 
@@ -26,12 +26,11 @@ use super::{Clause, LoopSpec, Slot, Spec, SpecError, SpecErrorKind};
 type Bindings = HashMap<Symbol, Option<(Sort, Slot)>>;
 
 pub(crate) fn collect<'tcx>(
-    cx: &mut Context,
     tcx: TyCtxt<'tcx>,
     owner: LocalDefId,
     body: &Body<'tcx>,
 ) -> Result<Spec, SpecError> {
-    let args = bindings(cx, tcx, body, |info| info.argument_index.is_some());
+    let args = bindings(tcx, body, |info| info.argument_index.is_some());
     let result = Symbol::intern("result");
     #[allow(deprecated)]
     let attrs = tcx.get_all_attrs(owner.to_def_id());
@@ -42,23 +41,22 @@ pub(crate) fn collect<'tcx>(
     }
 
     let mut results = args.clone();
-    if let Some(sort) = cx.sort(tcx, body.local_decls[RETURN_PLACE].ty) {
+    if let Some(sort) = body.local_decls[RETURN_PLACE].ty.sort(tcx) {
         results.insert(result, Some((sort, Slot::Result)));
     }
-    let locals = bindings(cx, tcx, body, |_| true);
+    let locals = bindings(tcx, body, |_| true);
     let mut spec = Spec::default();
 
     for attr in attrs {
-        if let Some(clause) = clause(cx, tcx, attr, "requires", &args)? {
+        if let Some(clause) = clause(tcx, attr, "requires", &args)? {
             spec.requires.push(clause);
-        } else if let Some(clause) = clause(cx, tcx, attr, "ensures", &results)? {
+        } else if let Some(clause) = clause(tcx, attr, "ensures", &results)? {
             spec.ensures.push(clause);
         }
     }
 
     let hir_body = tcx.hir_body_owned_by(owner);
-    let mut collector =
-        LoopCollector { cx, tcx, bindings: &locals, loops: Vec::new(), error: None };
+    let mut collector = LoopCollector { tcx, bindings: &locals, loops: Vec::new(), error: None };
     collector.visit_expr(hir_body.value);
     if let Some(error) = collector.error {
         return Err(error);
@@ -69,7 +67,6 @@ pub(crate) fn collect<'tcx>(
 }
 
 fn bindings<'tcx>(
-    cx: &mut Context,
     tcx: TyCtxt<'tcx>,
     body: &Body<'tcx>,
     include: impl Fn(&VarDebugInfo<'tcx>) -> bool,
@@ -80,7 +77,7 @@ fn bindings<'tcx>(
         if !place.projection.is_empty() {
             continue;
         }
-        let Some(sort) = cx.sort(tcx, body.local_decls[place.local].ty) else { continue };
+        let Some(sort) = body.local_decls[place.local].ty.sort(tcx) else { continue };
         let binding = (sort, Slot::Local(place.local));
         bindings
             .entry(info.name)
@@ -95,7 +92,6 @@ fn bindings<'tcx>(
 }
 
 fn clause(
-    cx: &mut Context,
     tcx: TyCtxt<'_>,
     attr: &Attribute,
     name: &str,
@@ -119,7 +115,7 @@ fn clause(
         .source_map()
         .span_to_snippet(span)
         .map_err(|_| SpecError { span, kind: SpecErrorKind::Snippet })?;
-    let node = parse(cx, &text, |name| match bindings.get(&Symbol::intern(name)) {
+    let node = parse(&text, |name| match bindings.get(&Symbol::intern(name)) {
         Some(Some(binding)) => Ok(*binding),
         Some(None) => Err(ResolveError::Ambiguous),
         None => Err(ResolveError::Unknown),
@@ -141,7 +137,6 @@ fn subspan(span: Span, range: Range<usize>) -> Span {
 }
 
 struct LoopCollector<'a, 'tcx> {
-    cx: &'a mut Context,
     tcx: TyCtxt<'tcx>,
     bindings: &'a Bindings,
     loops: Vec<LoopSpec>,
@@ -155,9 +150,7 @@ impl<'tcx> Visitor<'tcx> for LoopCollector<'_, 'tcx> {
                 .tcx
                 .hir_attrs(expr.hir_id)
                 .iter()
-                .filter_map(|attr| {
-                    clause(self.cx, self.tcx, attr, "invariant", self.bindings).transpose()
-                })
+                .filter_map(|attr| clause(self.tcx, attr, "invariant", self.bindings).transpose())
                 .collect();
             match invariants {
                 Ok(invariants) => self.loops.push(LoopSpec { invariants }),
