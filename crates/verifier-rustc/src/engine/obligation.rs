@@ -10,6 +10,7 @@ use verifier_core::Term;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ObligationKind {
     RuntimeAssertion,
+    CallPrecondition,
     Postcondition,
     LoopInvariantInitialization,
     LoopInvariantPreservation,

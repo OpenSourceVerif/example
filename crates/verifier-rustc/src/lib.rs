@@ -32,14 +32,14 @@ pub struct Verification {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Error {
     Spec(SpecError),
-    Execution(ExecutionError),
+    Execution { error: ExecutionError, contracted: bool },
 }
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Spec(error) => error.fmt(f),
-            Self::Execution(error) => error.fmt(f),
+            Self::Execution { error, .. } => error.fmt(f),
         }
     }
 }
@@ -54,9 +54,10 @@ pub fn verify<'tcx>(
     body: &Body<'tcx>,
 ) -> Result<Verification, Error> {
     let spec = spec::collect(tcx, owner, body).map_err(Error::Spec)?;
+    let contracted = !spec.is_empty();
     let mut environment = Environment::new();
-    let obligations =
-        engine::execute(&mut environment, tcx, body, &spec).map_err(Error::Execution)?;
+    let obligations = engine::execute(&mut environment, tcx, body, &spec)
+        .map_err(|error| Error::Execution { error, contracted })?;
 
     Ok(Verification { environment, obligations })
 }

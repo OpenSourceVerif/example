@@ -1,6 +1,8 @@
 use rustc_middle::mir::{
-    BasicBlock, Location, NonDivergingIntrinsic, RETURN_PLACE, StatementKind, TerminatorKind,
+    BasicBlock, Location, NonDivergingIntrinsic, Operand, Place, RETURN_PLACE, StatementKind,
+    TerminatorKind,
 };
+use rustc_span::{Span, Spanned};
 use smallvec::SmallVec;
 use verifier_core::{
     Intern, Term,
@@ -12,13 +14,33 @@ use crate::{
         loop_analysis::LoopInfo,
         obligation::{ExecutionError, LocationExt, Obligation, ObligationKind},
     },
-    spec::{Clause, Slot},
+    spec::{self, Clause, Slot},
     types::RustcTy,
 };
 
 use super::{Evaluate, Execute, Executor, State, conjoin, entry_loc};
 
 impl<'a, 'tcx> Executor<'a, 'tcx> {
+    fn instantiate_call_clause(
+        &mut self,
+        clause: &Clause,
+        arguments: &[Term],
+        result: Option<Term>,
+        location: Location,
+        callee: &str,
+    ) -> Result<Term, ExecutionError> {
+        instantiate(&clause.node, self.environment, |slot| match slot {
+            Slot::Local(local) => local
+                .index()
+                .checked_sub(1)
+                .and_then(|index| arguments.get(index))
+                .copied()
+                .map(Actual::Value),
+            Slot::Result => result.map(Actual::Value),
+        })
+        .map_err(|message| location.error(format!("invalid contract for `{callee}`: {message}")))
+    }
+
     fn instantiate_in_state(
         &mut self,
         clause: &Clause,
@@ -141,6 +163,83 @@ impl<'a, 'tcx> Executor<'a, 'tcx> {
         }
         Ok(())
     }
+
+    fn execute_call(
+        &mut self,
+        mut state: State,
+        func: &Operand<'tcx>,
+        args: &[Spanned<Operand<'tcx>>],
+        destination: Place<'tcx>,
+        target: Option<BasicBlock>,
+        span: Span,
+        pending: &mut Vec<State>,
+    ) -> Result<(), ExecutionError> {
+        let location = state.location;
+        let Some(target) = target else {
+            return Err(location.error("diverging function calls are unsupported"));
+        };
+        let Some((def_id, generic_args)) = func.const_fn_def() else {
+            return Err(location.error("indirect function calls are unsupported"));
+        };
+        if !generic_args.is_empty() {
+            return Err(location.error("generic function calls are unsupported"));
+        }
+        let Some(owner) = def_id.as_local() else {
+            return Err(location.error(format!(
+                "call to non-local function `{}` is unsupported",
+                self.tcx.def_path_str(def_id)
+            )));
+        };
+        let callee = self.tcx.def_path_str(def_id);
+        let arguments = args
+            .iter()
+            .map(|argument| self.evaluate(&state, &argument.node))
+            .collect::<Result<SmallVec<[_; 4]>, _>>()?;
+        let spec = {
+            let body = self.tcx.mir_drops_elaborated_and_const_checked(owner).borrow();
+            if body.arg_count != arguments.len() {
+                return Err(location.error(format!(
+                    "call to `{callee}` has {} arguments but its MIR body expects {}",
+                    arguments.len(),
+                    body.arg_count
+                )));
+            }
+            spec::collect(self.tcx, owner, &body).map_err(|error| {
+                location.error(format!("cannot use invalid contract for `{callee}`: {error}"))
+            })?
+        };
+
+        let premise = conjoin(self.environment, &state.facts);
+        for clause in &spec.requires {
+            let precondition =
+                self.instantiate_call_clause(clause, &arguments, None, location, &callee)?;
+            self.obligations.push(Obligation {
+                kind: ObligationKind::CallPrecondition,
+                location,
+                span,
+                condition: self.environment.implies(premise, precondition),
+            });
+        }
+
+        let return_ty = destination.ty(self.body, self.tcx).ty;
+        let Some(sort) = return_ty.sort(self.tcx) else {
+            return Err(location
+                .error(format!("call to `{callee}` has unsupported return type `{return_ty}`")));
+        };
+        let name = format!("call_result_{}", self.fresh_counter);
+        self.fresh_counter += 1;
+        let var = self.environment.bind_value(sort, name.as_str().intern());
+        let result = self.environment.var(var);
+        self.add_integer_range_facts(return_ty, result, &mut state.facts);
+
+        for clause in &spec.ensures {
+            let postcondition =
+                self.instantiate_call_clause(clause, &arguments, Some(result), location, &callee)?;
+            state.facts.push(postcondition);
+        }
+        self.write_place(&mut state, destination, result)?;
+        self.transition(state, target, pending)
+    }
 }
 
 impl<'a, 'tcx, 'mir> Execute<&'mir StatementKind<'tcx>> for Executor<'a, 'tcx> {
@@ -237,6 +336,9 @@ impl<'a, 'tcx, 'mir> Execute<&'mir TerminatorKind<'tcx>> for Executor<'a, 'tcx> 
                 state.facts.push(assertion);
                 self.transition(state, *target, pending)?;
             }
+            TerminatorKind::Call { func, args, destination, target, fn_span, .. } => {
+                self.execute_call(state, func, args, *destination, *target, *fn_span, pending)?;
+            }
             TerminatorKind::Return => {
                 let fact = conjoin(self.environment, &state.facts);
                 let value = state.store[RETURN_PLACE]
@@ -261,7 +363,6 @@ impl<'a, 'tcx, 'mir> Execute<&'mir TerminatorKind<'tcx>> for Executor<'a, 'tcx> 
             TerminatorKind::UnwindResume
             | TerminatorKind::UnwindTerminate(..)
             | TerminatorKind::Drop { .. }
-            | TerminatorKind::Call { .. }
             | TerminatorKind::TailCall { .. }
             | TerminatorKind::Yield { .. }
             | TerminatorKind::CoroutineDrop

@@ -42,6 +42,14 @@ The crate exposes `verify` as its main operation. It creates an explicit
 values, path facts, loop analysis, and rustc identities in the frontend. These
 frontend concerns do not belong in the core environment.
 
+Direct local calls are interpreted modularly. The caller proves instantiated
+callee preconditions, receives a fresh symbolic result, and assumes
+instantiated postconditions on the normal-return path. Rust calls are not
+translated to core function terms: those terms are referentially transparent,
+while an ordinary Rust function may depend on hidden state. Every contracted
+body is still verified separately, and failing or unsupported verification is
+an error before the crate can be accepted.
+
 ## `verifier-driver`
 
 `verifier-driver` owns process arguments, rustc callbacks, Z3 execution, and

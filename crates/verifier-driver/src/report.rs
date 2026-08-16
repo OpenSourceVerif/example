@@ -43,9 +43,14 @@ pub(crate) fn failure(tcx: TyCtxt<'_>, name: &str, body: &Body<'_>, error: &Erro
         Error::Spec(error) => {
             tcx.dcx().span_err(error.span, format!("{name}: invalid contract: {error}"));
         }
-        Error::Execution(error) => {
+        Error::Execution { error, contracted } => {
             let span = body.source_info(error.location).span;
-            tcx.dcx().span_warn(span, format!("{name}: skipped: {error}"));
+            let message = format!("{name}: not verified: {error}");
+            if *contracted {
+                tcx.dcx().span_err(span, message);
+            } else {
+                tcx.dcx().span_warn(span, message);
+            }
         }
     }
 }

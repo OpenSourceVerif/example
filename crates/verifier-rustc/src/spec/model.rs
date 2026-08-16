@@ -27,6 +27,14 @@ pub(crate) struct Spec {
     pub loops: Vec<LoopSpec>,
 }
 
+impl Spec {
+    pub fn is_empty(&self) -> bool {
+        self.requires.is_empty()
+            && self.ensures.is_empty()
+            && self.loops.iter().all(|loop_spec| loop_spec.invariants.is_empty())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SpecErrorKind {
     Parse(ParseErrorKind),

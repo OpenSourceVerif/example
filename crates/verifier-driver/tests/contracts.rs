@@ -24,24 +24,56 @@ fn does_not_translate_integer_not_as_boolean_not() {
     assert!(output.status.success(), "driver failed: {}", String::from_utf8_lossy(&output.stderr));
     let stderr = String::from_utf8(output.stderr).expect("driver error output is UTF-8");
     assert!(
-        stderr.contains("complement: skipped")
+        stderr.contains("complement: not verified")
             && stderr.contains("bitwise not on unsupported type `u8`"),
         "missing unsupported-operation diagnostic:\n{stderr}"
     );
 }
 
 #[test]
-fn reports_unsupported_mir_without_panicking() {
-    let output = run("unsupported_call.rs");
+fn executes_a_direct_local_call_without_inlining() {
+    let output = run("direct_call.rs");
 
     assert!(output.status.success(), "driver failed: {}", String::from_utf8_lossy(&output.stderr));
-    let stderr = String::from_utf8(output.stderr).expect("driver error output is UTF-8");
-    assert!(stderr.contains("call: skipped"), "missing skipped-function diagnostic:\n{stderr}");
     assert!(
-        stderr.contains("unsupported terminator `"),
-        "missing unsupported terminator:\n{stderr}"
+        output.stderr.is_empty(),
+        "unexpected diagnostics: {}",
+        String::from_utf8_lossy(&output.stderr)
     );
-    assert!(!stderr.contains("panicked"), "unsupported MIR panicked:\n{stderr}");
+}
+
+#[test]
+fn verifies_modular_call_contracts() {
+    let output = run("modular_calls.rs");
+
+    assert!(output.status.success(), "driver failed: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.stderr.is_empty(),
+        "unexpected diagnostics: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn reports_a_failed_call_precondition() {
+    let output = run("call_precondition.rs");
+
+    assert!(!output.status.success(), "driver accepted an invalid call");
+    let stderr = String::from_utf8(output.stderr).expect("driver error output is UTF-8");
+    assert!(stderr.contains("CallPrecondition 0 failed"), "missing failed VC:\n{stderr}");
+}
+
+#[test]
+fn does_not_trust_an_unsupported_contracted_function() {
+    let output = run("contracted_unsupported.rs");
+
+    assert!(!output.status.success(), "driver skipped a contracted function");
+    let stderr = String::from_utf8(output.stderr).expect("driver error output is UTF-8");
+    assert!(stderr.contains("complement: not verified"), "missing failure:\n{stderr}");
+    assert!(
+        stderr.contains("bitwise not on unsupported type `u8`"),
+        "missing unsupported-operation diagnostic:\n{stderr}"
+    );
 }
 
 #[test]
