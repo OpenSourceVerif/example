@@ -54,9 +54,16 @@ impl Uop {
     }
 }
 
-pub fn format_expr(sink: &mut String, environment: &Environment<Name>, expr: Term) {
+/// Checks and formats one symbolic expression as SMT-LIB.
+pub fn format_expr(
+    sink: &mut String,
+    environment: &Environment<Name>,
+    expr: Term,
+) -> Result<(), TypeError> {
+    environment.sort(expr)?;
     let interners = scoped!(INTERNERS);
     format_expr_with(sink, interners, environment, expr);
+    Ok(())
 }
 
 fn format_expr_with(
@@ -239,7 +246,7 @@ mod tests {
             let environment = Environment::<crate::Name>::new();
             let value = environment.int(i128::MIN);
             let mut formatted = String::new();
-            format_expr(&mut formatted, &environment, value);
+            format_expr(&mut formatted, &environment, value).unwrap();
             assert_eq!(formatted, i128::MIN.to_string());
         };
         // SAFETY: `body` is synchronous and discards all arena values.
@@ -318,6 +325,27 @@ mod tests {
                 smt(&environment, invalid),
                 Err(TypeError::Sort { expected: int, actual: bool })
             );
+        };
+        // SAFETY: `body` is synchronous and discards all arena values.
+        unsafe { INTERNERS.set(&interners, body) }
+    }
+
+    #[test]
+    fn checks_raw_terms_at_the_expression_boundary() {
+        let interners = Interners::default();
+        let body = || {
+            let environment = Environment::<crate::Name>::new();
+            let yes = TermDef::Bool(true).intern();
+            let invalid = TermDef::Binary { op: Op::Add, lhs: yes, rhs: yes }.intern();
+            let int = SortDef::Int.intern();
+            let bool = SortDef::Bool.intern();
+            let mut output = String::new();
+
+            assert_eq!(
+                format_expr(&mut output, &environment, invalid),
+                Err(TypeError::Sort { expected: int, actual: bool })
+            );
+            assert!(output.is_empty());
         };
         // SAFETY: `body` is synchronous and discards all arena values.
         unsafe { INTERNERS.set(&interners, body) }

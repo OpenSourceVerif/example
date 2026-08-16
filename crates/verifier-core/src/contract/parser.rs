@@ -218,7 +218,7 @@ where
             return self.error(Expected::End);
         }
         self.require(term, SortDef::Bool)?;
-        Ok(Clause { term, environment: self.environment })
+        Ok(Clause::from_checked(term, self.environment))
     }
 
     fn implies(&mut self) -> Result<Term, ParseError> {
@@ -446,10 +446,10 @@ mod tests {
             })
             .unwrap();
 
-            def!(let definition = clause.term);
+            def!(let definition = clause.term());
             assert!(matches!(*definition, TermDef::Binary { op: Op::Implies, .. }));
             assert_eq!(
-                clause.environment.iter().map(|(_, _, binding)| *binding).collect::<Vec<_>>(),
+                clause.environment().iter().map(|(_, _, binding)| *binding).collect::<Vec<_>>(),
                 [1, 2]
             );
         };
@@ -464,8 +464,8 @@ mod tests {
             let int = SortDef::Int.intern();
             let x = parse("x >= 0", |_| Ok((int, 1))).unwrap();
             let value = parse("value >= 0", |_| Ok((int, 2))).unwrap();
-            assert_eq!(value.term, x.term);
-            assert_ne!(value.environment, x.environment);
+            assert_eq!(value.term(), x.term());
+            assert_ne!(value.environment(), x.environment());
         };
         // SAFETY: `body` is synchronous and discards all arena values.
         unsafe { INTERNERS.set(&interners, body) }

@@ -53,7 +53,7 @@ pub fn instantiate<B: Copy, T>(
 ) -> Result<Term, InstantiateError<B>> {
     let mut terms = HashMap::new();
     let mut actuals = HashMap::new();
-    visit(target, clause, clause.term, &mut get, &mut terms, &mut actuals)
+    visit(target, clause, clause.term(), &mut get, &mut terms, &mut actuals)
 }
 
 fn actual<B: Copy>(
@@ -63,7 +63,7 @@ fn actual<B: Copy>(
     actuals: &mut HashMap<Var, Actual>,
 ) -> Result<(Declaration, Actual), InstantiateError<B>> {
     let (declaration, binding) =
-        clause.environment.get(var).ok_or(InstantiateError::Missing(var))?;
+        clause.environment().get(var).ok_or(InstantiateError::Missing(var))?;
     let value = if let Some(value) = actuals.get(&var) {
         *value
     } else {
@@ -163,7 +163,7 @@ mod tests {
             let parameter = source.bind_value(int, 2);
             let parameter = source.var(parameter);
             let term = source.call(function, &[parameter]);
-            let clause = Clause { term, environment: source };
+            let clause = Clause::new(term, source).unwrap();
 
             let mut target = Environment::new();
             let target_function = target.bind_function(&[int], int, "f");
@@ -193,7 +193,7 @@ mod tests {
             let mut source = Environment::new();
             let var = source.bind_value(int, 7);
             let term = source.var(var);
-            let clause = Clause { term, environment: source };
+            let clause = Clause::new(term, source).unwrap();
             let target = Environment::<()>::new();
             assert_eq!(instantiate(&clause, &target, |_| None), Err(InstantiateError::Unbound(7)));
         };
