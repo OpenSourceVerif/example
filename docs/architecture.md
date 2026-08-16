@@ -19,10 +19,13 @@ Symbolic identity storage and symbolic scope are separate:
   storage around the complete verification call tree, so ordinary operations
   can intern and resolve definitions without threading a storage parameter
   through every function.
+- Free functions in `term` intern raw syntax. They may normalize syntax such as
+  an empty tuple or a projection from a tuple literal, but do not inspect an
+  environment or establish a sorting judgment.
 - `Environment<B>` is explicit and belongs to one verification or open clause.
   It contains append-only declarations, frontend bindings, and a derived sort
-  cache. A raw interned term has syntax identity but is checked and sorted only
-  under an environment.
+  cache populated only by its checker. A raw interned term has syntax identity
+  but is checked and sorted only under an environment.
 
 The interned handles point into the current session arena and are thread
 confined. They must not escape the installed session, cross threads, or remain
@@ -63,11 +66,13 @@ synchronous.
 ## Checked boundaries
 
 Raw definitions may be interned without proving that they are well-sorted.
-`Environment::sort` is the central checker. Contract construction requires a
-well-sorted term under its owned environment, while the source contract parser
-additionally requires a Boolean term. SMT expression formatting checks its
-input before traversing it, and full SMT script generation requires a Boolean
-verification condition.
+The syntax-only `term` functions make no stronger claim. `Environment::sort` is
+the only operation which checks terms and populates the environment's sort
+cache. Contract construction requires a well-sorted term under its owned
+environment, while the source contract parser additionally requires a Boolean
+term. Contract instantiation checks the completed target term. SMT expression
+formatting checks its input before traversing it, and full SMT script generation
+requires a Boolean verification condition.
 
 ## Testing boundaries
 

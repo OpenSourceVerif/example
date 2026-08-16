@@ -6,7 +6,10 @@ use std::{
 use hashbrown::HashMap;
 use smallvec::SmallVec;
 
-use crate::{Declaration, Environment, Sort, Term, TermDef, TypeError, Var, def};
+use crate::{
+    Declaration, Environment, Sort, Term, TermDef, TypeError, Var, def,
+    term::{binary, call, proj, tuple, unary},
+};
 
 use super::Clause;
 
@@ -53,7 +56,9 @@ pub fn instantiate<B: Copy, T>(
 ) -> Result<Term, InstantiateError<B>> {
     let mut terms = HashMap::new();
     let mut actuals = HashMap::new();
-    visit(target, clause, clause.term(), &mut get, &mut terms, &mut actuals)
+    let term = visit(target, clause, clause.term(), &mut get, &mut terms, &mut actuals)?;
+    target.sort(term).map_err(InstantiateError::Invalid)?;
+    Ok(term)
 }
 
 fn actual<B: Copy>(
@@ -63,7 +68,7 @@ fn actual<B: Copy>(
     actuals: &mut HashMap<Var, Actual>,
 ) -> Result<(Declaration, Actual), InstantiateError<B>> {
     let (declaration, binding) =
-        clause.environment().get(var).ok_or(InstantiateError::Missing(var))?;
+        clause.env().get(var).ok_or(InstantiateError::Missing(var))?;
     let value = if let Some(value) = actuals.get(&var) {
         *value
     } else {
@@ -104,12 +109,12 @@ fn visit<B: Copy, T>(
         }
         TermDef::Unary { op, expr } => {
             let expr = visit(target, clause, expr, get, terms, actuals)?;
-            target.unary(op, expr)
+            unary(op, expr)
         }
         TermDef::Binary { op, lhs, rhs } => {
             let lhs = visit(target, clause, lhs, get, terms, actuals)?;
             let rhs = visit(target, clause, rhs, get, terms, actuals)?;
-            target.binary(op, lhs, rhs)
+            binary(op, lhs, rhs)
         }
         TermDef::Call { function, arguments } => {
             let (declaration, actual) = actual(clause, function, get, actuals)?;
@@ -128,18 +133,18 @@ fn visit<B: Copy, T>(
                 .iter()
                 .map(|argument| visit(target, clause, *argument, get, terms, actuals))
                 .collect::<Result<SmallVec<[_; 4]>, _>>()?;
-            target.call(function, &arguments)
+            call(function, &arguments)
         }
         TermDef::Tuple(fields) => {
             let fields = fields
                 .iter()
                 .map(|field| visit(target, clause, *field, get, terms, actuals))
                 .collect::<Result<SmallVec<[_; 4]>, _>>()?;
-            target.tuple(&fields)
+            tuple(&fields)
         }
         TermDef::Proj { tuple, field } => {
             let tuple = visit(target, clause, tuple, get, terms, actuals)?;
-            target.proj(tuple, field)
+            proj(tuple, field)
         }
     };
     terms.insert(term, result);
@@ -150,7 +155,10 @@ fn visit<B: Copy, T>(
 mod tests {
     use super::{Actual, InstantiateError, instantiate};
     use crate::{
-        Environment, INTERNERS, Intern, Interners, SortDef, TermDef, contract::Clause, def,
+        Environment, INTERNERS, Intern, Interners, SortDef, TermDef,
+        contract::Clause,
+        def,
+        term::{call, int as integer, var as variable},
     };
 
     #[test]
@@ -161,13 +169,11 @@ mod tests {
             let mut source = Environment::new();
             let function = source.bind_function(&[int], int, 1);
             let parameter = source.bind_value(int, 2);
-            let parameter = source.var(parameter);
-            let term = source.call(function, &[parameter]);
-            let clause = Clause::new(term, source).unwrap();
+            let clause = Clause::new(call(function, &[variable(parameter)]), source).unwrap();
 
             let mut target = Environment::new();
             let target_function = target.bind_function(&[int], int, "f");
-            let value = target.int(42);
+            let value = integer(42);
             let term = instantiate(&clause, &target, |binding| match binding {
                 1 => Some(Actual::Function(target_function)),
                 2 => Some(Actual::Value(value)),
@@ -192,8 +198,7 @@ mod tests {
             let int = SortDef::Int.intern();
             let mut source = Environment::new();
             let var = source.bind_value(int, 7);
-            let term = source.var(var);
-            let clause = Clause::new(term, source).unwrap();
+            let clause = Clause::new(variable(var), source).unwrap();
             let target = Environment::<()>::new();
             assert_eq!(instantiate(&clause, &target, |_| None), Err(InstantiateError::Unbound(7)));
         };

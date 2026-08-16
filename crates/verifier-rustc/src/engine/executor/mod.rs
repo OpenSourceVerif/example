@@ -8,6 +8,7 @@ use smallvec::SmallVec;
 use verifier_core::{
     Environment, Intern, Name, Term,
     contract::{Actual, instantiate},
+    term::{and, bool, ge, int, le, var as variable},
 };
 
 use crate::{
@@ -55,7 +56,7 @@ fn entry_loc(block: BasicBlock) -> Location {
 }
 
 struct Executor<'a, 'tcx> {
-    environment: &'a mut Environment<Name>,
+    env: &'a mut Environment<Name>,
     tcx: TyCtxt<'tcx>,
     body: &'a Body<'tcx>,
     typing_env: TypingEnv<'tcx>,
@@ -69,7 +70,7 @@ struct Executor<'a, 'tcx> {
 /// Executes a rustc MIR control-flow graph using symbolic values and generates
 /// the obligations induced by its source-level contracts.
 pub(crate) fn execute<'tcx>(
-    environment: &mut Environment<Name>,
+    env: &mut Environment<Name>,
     tcx: TyCtxt<'tcx>,
     body: &Body<'tcx>,
     spec: &Spec,
@@ -77,7 +78,7 @@ pub(crate) fn execute<'tcx>(
     let location = entry_loc(START_BLOCK);
     let loops = LoopAnalysis::new(body, spec).map_err(|error| location.error(error.to_string()))?;
     Executor {
-        environment,
+        env,
         tcx,
         body,
         typing_env: TypingEnv::post_analysis(tcx, body.source.def_id()),
@@ -90,13 +91,9 @@ pub(crate) fn execute<'tcx>(
     .run()
 }
 
-fn conjoin<'a>(environment: &Environment<Name>, terms: impl IntoIterator<Item = &'a Term>) -> Term {
+fn conjoin<'a>(terms: impl IntoIterator<Item = &'a Term>) -> Term {
     let mut terms = terms.into_iter().copied();
-    if let Some(first) = terms.next() {
-        terms.fold(first, |lhs, rhs| environment.and(lhs, rhs))
-    } else {
-        environment.bool(true)
-    }
+    if let Some(first) = terms.next() { terms.fold(first, and) } else { bool(true) }
 }
 
 impl<'a, 'tcx> Executor<'a, 'tcx> {
@@ -107,10 +104,8 @@ impl<'a, 'tcx> Executor<'a, 'tcx> {
         facts: &mut SmallVec<[Term; 8]>,
     ) {
         let Some(bounds) = integer_layout(self.tcx, ty).and_then(integer_bounds) else { return };
-        let minimum = self.environment.int(bounds.0);
-        let maximum = self.environment.int(bounds.1);
-        facts.push(self.environment.ge(term, minimum));
-        facts.push(self.environment.le(term, maximum));
+        facts.push(ge(term, int(bounds.0)));
+        facts.push(le(term, int(bounds.1)));
     }
 
     fn run(mut self) -> Result<Vec<Obligation>, ExecutionError> {
@@ -149,15 +144,15 @@ impl<'a, 'tcx> Executor<'a, 'tcx> {
                 Some(name) => name.as_str().intern(),
                 None => format!("arg{index}").as_str().intern(),
             };
-            let var = self.environment.bind_value(sort, name);
-            let term = self.environment.var(var);
+            let var = self.env.bind_value(sort, name);
+            let term = variable(var);
             self.entry[local] = Some(term);
             store[local] = Some(term);
             self.add_integer_range_facts(ty, term, &mut facts);
         }
 
         for clause in &self.spec.requires {
-            let term = instantiate(&clause.node, self.environment, |slot| match slot {
+            let term = instantiate(&clause.node, self.env, |slot| match slot {
                 Slot::Local(local) => store[local].map(Actual::Value),
                 Slot::Result => None,
             })
@@ -187,19 +182,22 @@ impl<'a, 'tcx> Executor<'a, 'tcx> {
 
 #[cfg(test)]
 mod tests {
-    use verifier_core::{Environment, INTERNERS, Intern, Interners, Op, SortDef, TermDef, def};
+    use verifier_core::{
+        Environment, INTERNERS, Intern, Interners, Op, SortDef, TermDef, def,
+        term::{implies, var as variable},
+    };
 
     #[test]
     fn assertion_vc_is_guarded_by_its_path_condition() {
         let interners = Interners::default();
         let body = || {
             let bool_sort = SortDef::Bool.intern();
-            let mut environment = Environment::new();
-            let path_var = environment.bind_value(bool_sort, "path");
-            let assertion_var = environment.bind_value(bool_sort, "assertion");
-            let path = environment.var(path_var);
-            let assertion = environment.var(assertion_var);
-            let vc = environment.implies(path, assertion);
+            let mut env = Environment::new();
+            let path_var = env.bind_value(bool_sort, "path");
+            let assertion_var = env.bind_value(bool_sort, "assertion");
+            let path = variable(path_var);
+            let assertion = variable(assertion_var);
+            let vc = implies(path, assertion);
 
             def!(let definition = vc);
             assert_eq!(definition, &TermDef::Binary { op: Op::Implies, lhs: path, rhs: assertion });

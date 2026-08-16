@@ -3,6 +3,7 @@ mod environment;
 mod intern;
 pub mod ir;
 pub mod smt;
+pub mod term;
 
 pub use environment::{Declaration, Environment, TypeError};
 pub use intern::{INTERNERS, Intern, Interners, Resolve};

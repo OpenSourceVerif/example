@@ -57,44 +57,39 @@ impl Uop {
 /// Checks and formats one symbolic expression as SMT-LIB.
 pub fn format_expr(
     sink: &mut String,
-    environment: &Environment<Name>,
+    env: &Environment<Name>,
     expr: Term,
 ) -> Result<(), TypeError> {
-    environment.sort(expr)?;
+    env.sort(expr)?;
     let interners = scoped!(INTERNERS);
-    format_expr_with(sink, interners, environment, expr);
+    format_expr_with(sink, interners, env, expr);
     Ok(())
 }
 
-fn format_expr_with(
-    sink: &mut String,
-    interners: &Interners,
-    environment: &Environment<Name>,
-    expr: Term,
-) {
+fn format_expr_with(sink: &mut String, interners: &Interners, env: &Environment<Name>, expr: Term) {
     match *interners.resolve_term(expr) {
-        TermDef::Var(var) => format_var(sink, interners, environment, var),
+        TermDef::Var(var) => format_var(sink, interners, env, var),
         TermDef::Const(value) => swrite!(sink, "{}", value),
         TermDef::Bool(value) => swrite!(sink, "{}", value),
         TermDef::Call { function, arguments } => {
             swrite!(sink, "(");
-            format_var(sink, interners, environment, function);
+            format_var(sink, interners, env, function);
             for argument in arguments {
                 swrite!(sink, " ");
-                format_expr_with(sink, interners, environment, *argument);
+                format_expr_with(sink, interners, env, *argument);
             }
             swrite!(sink, ")");
         }
         TermDef::Unary { op, expr } => {
             swrite!(sink, "({} ", op.smt_style());
-            format_expr_with(sink, interners, environment, expr);
+            format_expr_with(sink, interners, env, expr);
             swrite!(sink, ")");
         }
         TermDef::Binary { op, lhs, rhs } => {
             swrite!(sink, "({} ", op.smt_style());
-            format_expr_with(sink, interners, environment, lhs);
+            format_expr_with(sink, interners, env, lhs);
             swrite!(sink, " ");
-            format_expr_with(sink, interners, environment, rhs);
+            format_expr_with(sink, interners, env, rhs);
             swrite!(sink, ")");
         }
         TermDef::Unit => swrite!(sink, "tuple0"),
@@ -102,25 +97,24 @@ fn format_expr_with(
             swrite!(sink, "(tuple{}", fields.len());
             for field in fields {
                 swrite!(sink, " ");
-                format_expr_with(sink, interners, environment, *field);
+                format_expr_with(sink, interners, env, *field);
             }
             swrite!(sink, ")");
         }
         TermDef::Proj { tuple, field } => {
-            let sort =
-                environment.cached_sort(tuple).expect("unchecked tuple reached SMT emission");
+            let sort = env.cached_sort(tuple).expect("unchecked tuple reached SMT emission");
             let SortDef::Tuple(fields) = *interners.resolve_sort(sort) else {
                 panic!("projection from non-tuple term reached SMT emission")
             };
             swrite!(sink, "(tuple{}!{} ", fields.len(), field);
-            format_expr_with(sink, interners, environment, tuple);
+            format_expr_with(sink, interners, env, tuple);
             swrite!(sink, ")");
         }
     }
 }
 
-fn format_var(sink: &mut String, interners: &Interners, environment: &Environment<Name>, var: Var) {
-    swrite!(sink, "{}!{}", interners.resolve_name(*environment.binding(var)), var.index());
+fn format_var(sink: &mut String, interners: &Interners, env: &Environment<Name>, var: Var) {
+    swrite!(sink, "{}!{}", interners.resolve_name(*env.binding(var)), var.index());
 }
 
 fn format_sort(sink: &mut String, interners: &Interners, sort: Sort) {
@@ -148,9 +142,9 @@ fn collect_tuple_arities(arities: &mut FixedBitSet, interners: &Interners, sort:
     }
 }
 
-fn declare_tuples(sink: &mut String, interners: &Interners, environment: &Environment<Name>) {
+fn declare_tuples(sink: &mut String, interners: &Interners, env: &Environment<Name>) {
     let mut arities = FixedBitSet::with_capacity(64);
-    for (_, declaration, _) in environment.iter() {
+    for (_, declaration, _) in env.iter() {
         match declaration {
             Declaration::Value(sort) => collect_tuple_arities(&mut arities, interners, *sort),
             Declaration::Function { domain, range } => {
@@ -161,7 +155,7 @@ fn declare_tuples(sink: &mut String, interners: &Interners, environment: &Enviro
             }
         }
     }
-    for sort in environment.cached_sorts() {
+    for sort in env.cached_sorts() {
         collect_tuple_arities(&mut arities, interners, sort);
     }
 
@@ -186,8 +180,8 @@ fn declare_tuples(sink: &mut String, interners: &Interners, environment: &Enviro
     }
 }
 
-pub fn smt(environment: &Environment<Name>, vc: Term) -> Result<String, TypeError> {
-    let sort = environment.sort(vc)?;
+pub fn smt(env: &Environment<Name>, vc: Term) -> Result<String, TypeError> {
+    let sort = env.sort(vc)?;
     let bool = SortDef::Bool.intern();
     if sort != bool {
         return Err(TypeError::Sort { expected: bool, actual: sort });
@@ -198,20 +192,20 @@ pub fn smt(environment: &Environment<Name>, vc: Term) -> Result<String, TypeErro
     let mut result = String::new();
     let sink = &mut result;
     swrite!(sink, "(set-logic ALL)\n\n");
-    declare_tuples(sink, interners, environment);
+    declare_tuples(sink, interners, env);
 
-    for (var, declaration, _) in environment.iter() {
+    for (var, declaration, _) in env.iter() {
         match declaration {
             Declaration::Value(sort) => {
                 swrite!(sink, "(declare-const ");
-                format_var(sink, interners, environment, var);
+                format_var(sink, interners, env, var);
                 swrite!(sink, " ");
                 format_sort(sink, interners, *sort);
                 swrite!(sink, ")\n");
             }
             Declaration::Function { domain, range } => {
                 swrite!(sink, "(declare-fun ");
-                format_var(sink, interners, environment, var);
+                format_var(sink, interners, env, var);
                 swrite!(sink, " (");
                 for (index, sort) in domain.iter().enumerate() {
                     if index > 0 {
@@ -227,7 +221,7 @@ pub fn smt(environment: &Environment<Name>, vc: Term) -> Result<String, TypeErro
     }
 
     swrite!(sink, "\n(assert (not ");
-    format_expr_with(sink, interners, environment, vc);
+    format_expr_with(sink, interners, env, vc);
     swrite!(sink, "))\n\n(check-sat)\n(get-model)\n");
     Ok(result)
 }
@@ -237,16 +231,16 @@ mod tests {
     use crate::{
         Environment, Fields, INTERNERS, Intern, Interners, Op, SortDef, TermDef, TypeError,
         format_expr, smt,
+        term::{and, call, eq, int as integer, proj, unit as unit_term, var as variable},
     };
 
     #[test]
     fn formats_full_width_integer_constants() {
         let interners = Interners::default();
         let body = || {
-            let environment = Environment::<crate::Name>::new();
-            let value = environment.int(i128::MIN);
+            let env = Environment::<crate::Name>::new();
             let mut formatted = String::new();
-            format_expr(&mut formatted, &environment, value).unwrap();
+            format_expr(&mut formatted, &env, integer(i128::MIN)).unwrap();
             assert_eq!(formatted, i128::MIN.to_string());
         };
         // SAFETY: `body` is synchronous and discards all arena values.
@@ -259,13 +253,10 @@ mod tests {
         let body = || {
             let int = SortDef::Int.intern();
             let name = "x".intern();
-            let mut environment = Environment::new();
-            let first = environment.bind_value(int, name);
-            let second = environment.bind_value(int, name);
-            let first = environment.var(first);
-            let second = environment.var(second);
-            let equality = environment.eq(first, second);
-            let output = smt(&environment, equality).unwrap();
+            let mut env = Environment::new();
+            let first = variable(env.bind_value(int, name));
+            let second = variable(env.bind_value(int, name));
+            let output = smt(&env, eq(first, second)).unwrap();
             assert!(output.contains("(declare-const x!0 Int)"));
             assert!(output.contains("(declare-const x!1 Int)"));
             assert!(output.contains("(= x!0 x!1)"));
@@ -282,22 +273,19 @@ mod tests {
             let bool = SortDef::Bool.intern();
             let unit = SortDef::Tuple(Fields::new(&[])).intern();
             let pair_sort = SortDef::Tuple(Fields::new(&[int, bool])).intern();
-            let mut environment = Environment::new();
-            let pair = environment.bind_value(pair_sort, "pair".intern());
-            let unit = environment.bind_value(unit, "unit".intern());
-            let function = environment.bind_function(&[int], int, "f".intern());
-            let pair = environment.var(pair);
-            let unit = environment.var(unit);
-            let first = environment.proj(pair, 0);
-            let one = environment.int(1);
-            let called = environment.call(function, &[one]);
-            let call_holds = environment.eq(called, one);
-            let pair_holds = environment.eq(first, one);
-            let unit_value = environment.unit();
-            let unit_holds = environment.eq(unit, unit_value);
-            let tail = environment.and(pair_holds, unit_holds);
-            let vc = environment.and(call_holds, tail);
-            let output = smt(&environment, vc).unwrap();
+            let mut env = Environment::new();
+            let pair = variable(env.bind_value(pair_sort, "pair".intern()));
+            let unit = variable(env.bind_value(unit, "unit".intern()));
+            let function = env.bind_function(&[int], int, "f".intern());
+            let one = integer(1);
+            let output = smt(
+                &env,
+                and(
+                    eq(call(function, &[one]), one),
+                    and(eq(proj(pair, 0), one), eq(unit, unit_term())),
+                ),
+            )
+            .unwrap();
             assert!(output.contains("(declare-datatype Tuple0 ((tuple0)))"));
             assert!(output.contains(
                 "(declare-datatype Tuple2 (par (T0 T1) ((tuple2 (tuple2!0 T0) (tuple2!1 T1)))))"
@@ -315,16 +303,13 @@ mod tests {
     fn checks_raw_terms_at_the_smt_boundary() {
         let interners = Interners::default();
         let body = || {
-            let environment = Environment::<crate::Name>::new();
+            let env = Environment::<crate::Name>::new();
             let yes = TermDef::Bool(true).intern();
             let invalid = TermDef::Binary { op: Op::Add, lhs: yes, rhs: yes }.intern();
             let int = SortDef::Int.intern();
             let bool = SortDef::Bool.intern();
 
-            assert_eq!(
-                smt(&environment, invalid),
-                Err(TypeError::Sort { expected: int, actual: bool })
-            );
+            assert_eq!(smt(&env, invalid), Err(TypeError::Sort { expected: int, actual: bool }));
         };
         // SAFETY: `body` is synchronous and discards all arena values.
         unsafe { INTERNERS.set(&interners, body) }
@@ -334,7 +319,7 @@ mod tests {
     fn checks_raw_terms_at_the_expression_boundary() {
         let interners = Interners::default();
         let body = || {
-            let environment = Environment::<crate::Name>::new();
+            let env = Environment::<crate::Name>::new();
             let yes = TermDef::Bool(true).intern();
             let invalid = TermDef::Binary { op: Op::Add, lhs: yes, rhs: yes }.intern();
             let int = SortDef::Int.intern();
@@ -342,7 +327,7 @@ mod tests {
             let mut output = String::new();
 
             assert_eq!(
-                format_expr(&mut output, &environment, invalid),
+                format_expr(&mut output, &env, invalid),
                 Err(TypeError::Sort { expected: int, actual: bool })
             );
             assert!(output.is_empty());

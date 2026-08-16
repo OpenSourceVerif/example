@@ -58,7 +58,7 @@ impl std::error::Error for TypeError {}
 ///
 /// Entries are append-only, so adding a fresh variable does not reinterpret existing terms.
 /// Sorts are cached per environment because one interned term may have different sorts under
-/// different environments. The cache is derived data, so typed construction only needs `&self`.
+/// different environments. The cache is populated only by checking interned terms.
 pub struct Environment<B> {
     entries: IndexVec<Var, (Declaration, B)>,
     sorts: RefCell<HashMap<Term, Sort>>,
@@ -119,7 +119,7 @@ impl<B> Environment<B> {
 
     /// Checks and returns a term's sort under this environment.
     ///
-    /// Terms constructed or previously checked under the environment are O(1) lookups.
+    /// Terms previously checked under the environment are O(1) lookups.
     pub fn sort(&self, term: Term) -> Result<Sort, TypeError> {
         if let Some(sort) = self.cached_sort(term) {
             return Ok(sort);
@@ -153,53 +153,6 @@ impl<B> Environment<B> {
         Ok(sort)
     }
 
-    fn term(&self, sort: Sort, definition: TermDef<'_>) -> Term {
-        let term = definition.intern();
-        self.remember(term, sort);
-        term
-    }
-
-    pub fn var(&self, var: Var) -> Term {
-        let sort = match self.declaration(var) {
-            Value(sort) => *sort,
-            Function { .. } => panic!("function used as a value"),
-        };
-        self.term(sort, TermDef::Var(var))
-    }
-
-    pub fn int(&self, value: i128) -> Term {
-        self.term(int_sort(), TermDef::Const(value))
-    }
-
-    pub fn bool(&self, value: bool) -> Term {
-        self.term(bool_sort(), TermDef::Bool(value))
-    }
-
-    pub fn unit(&self) -> Term {
-        self.term(unit_sort(), TermDef::Unit)
-    }
-
-    pub fn tuple(&self, fields: &[Term]) -> Term {
-        if fields.is_empty() {
-            return self.unit();
-        }
-        let sorts = fields
-            .iter()
-            .map(|field| self.sort(*field).expect("checked tuple field"))
-            .collect::<SmallVec<[_; 4]>>();
-        self.term(tuple_sort(&sorts), TermDef::Tuple(Fields::new(fields)))
-    }
-
-    pub fn proj(&self, tuple: Term, field: impl Into<Field>) -> Term {
-        let field = field.into();
-        def!(let definition = tuple);
-        if let TermDef::Tuple(fields) = *definition {
-            return fields[field.index()];
-        }
-        let sort = self.projection_sort(tuple, field).expect("checked tuple projection");
-        self.term(sort, TermDef::Proj { tuple, field })
-    }
-
     fn projection_sort(&self, tuple: Term, field: Field) -> Result<Sort, TypeError> {
         let tuple = self.sort(tuple)?;
         def!(let definition = tuple);
@@ -210,11 +163,6 @@ impl<B> Environment<B> {
                 .ok_or(TypeError::MissingField { sort: tuple, field }),
             _ => Err(TypeError::ExpectedTuple(tuple)),
         }
-    }
-
-    pub fn call(&self, function: Var, arguments: &[Term]) -> Term {
-        let sort = self.call_sort(function, arguments).expect("checked function call");
-        self.term(sort, TermDef::Call { function, arguments: Fields::new(arguments) })
     }
 
     fn call_sort(&self, function: Var, arguments: &[Term]) -> Result<Sort, TypeError> {
@@ -235,11 +183,6 @@ impl<B> Environment<B> {
             self.expect_sort(*argument, *expected)?;
         }
         Ok(*range)
-    }
-
-    pub fn binary(&self, op: Op, lhs: Term, rhs: Term) -> Term {
-        let sort = self.binary_sort(op, lhs, rhs).expect("checked binary expression");
-        self.term(sort, TermDef::Binary { op, lhs, rhs })
     }
 
     fn binary_sort(&self, op: Op, lhs: Term, rhs: Term) -> Result<Sort, TypeError> {
@@ -267,11 +210,6 @@ impl<B> Environment<B> {
         }
     }
 
-    pub fn unary(&self, op: Uop, expr: Term) -> Term {
-        let sort = self.unary_sort(op, expr).expect("checked unary expression");
-        self.term(sort, TermDef::Unary { op, expr })
-    }
-
     fn unary_sort(&self, op: Uop, expr: Term) -> Result<Sort, TypeError> {
         let operand = self.sort(expr)?;
         let expected = match op {
@@ -284,49 +222,6 @@ impl<B> Environment<B> {
 
     fn expect_sort(&self, term: Term, expected: Sort) -> Result<(), TypeError> {
         expect(self.sort(term)?, expected)
-    }
-
-    pub fn add(&self, lhs: Term, rhs: Term) -> Term {
-        self.binary(Op::Add, lhs, rhs)
-    }
-    pub fn sub(&self, lhs: Term, rhs: Term) -> Term {
-        self.binary(Op::Sub, lhs, rhs)
-    }
-    pub fn mul(&self, lhs: Term, rhs: Term) -> Term {
-        self.binary(Op::Mul, lhs, rhs)
-    }
-    pub fn eq(&self, lhs: Term, rhs: Term) -> Term {
-        self.binary(Op::Eq, lhs, rhs)
-    }
-    pub fn ne(&self, lhs: Term, rhs: Term) -> Term {
-        self.binary(Op::Ne, lhs, rhs)
-    }
-    pub fn lt(&self, lhs: Term, rhs: Term) -> Term {
-        self.binary(Op::Lt, lhs, rhs)
-    }
-    pub fn le(&self, lhs: Term, rhs: Term) -> Term {
-        self.binary(Op::Le, lhs, rhs)
-    }
-    pub fn gt(&self, lhs: Term, rhs: Term) -> Term {
-        self.binary(Op::Gt, lhs, rhs)
-    }
-    pub fn ge(&self, lhs: Term, rhs: Term) -> Term {
-        self.binary(Op::Ge, lhs, rhs)
-    }
-    pub fn and(&self, lhs: Term, rhs: Term) -> Term {
-        self.binary(Op::And, lhs, rhs)
-    }
-    pub fn or(&self, lhs: Term, rhs: Term) -> Term {
-        self.binary(Op::Or, lhs, rhs)
-    }
-    pub fn implies(&self, lhs: Term, rhs: Term) -> Term {
-        self.binary(Op::Implies, lhs, rhs)
-    }
-    pub fn not(&self, expr: Term) -> Term {
-        self.unary(Uop::Not, expr)
-    }
-    pub fn neg(&self, expr: Term) -> Term {
-        self.unary(Uop::Neg, expr)
     }
 }
 
@@ -374,4 +269,34 @@ fn tuple_sort(fields: &[Sort]) -> Sort {
 
 fn expect(actual: Sort, expected: Sort) -> Result<(), TypeError> {
     if actual == expected { Ok(()) } else { Err(TypeError::Sort { expected, actual }) }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        Environment, INTERNERS, Intern, Interners, Op, SortDef, TypeError,
+        term::{binary, bool},
+    };
+
+    #[test]
+    fn only_checked_terms_are_cached() {
+        let interners = Interners::default();
+        let body = || {
+            let env = Environment::<()>::new();
+            let yes = bool(true);
+            let invalid = binary(Op::Add, yes, yes);
+            let int_sort = SortDef::Int.intern();
+            let bool_sort = SortDef::Bool.intern();
+
+            assert_eq!(env.cached_sort(invalid), None);
+            assert_eq!(
+                env.sort(invalid),
+                Err(TypeError::Sort { expected: int_sort, actual: bool_sort })
+            );
+            assert_eq!(env.cached_sort(invalid), None);
+            assert_eq!(env.cached_sort(yes), Some(bool_sort));
+        };
+        // SAFETY: `body` is synchronous and discards all arena values.
+        unsafe { INTERNERS.set(&interners, body) }
+    }
 }

@@ -55,9 +55,9 @@ pub fn verify<'tcx>(
 ) -> Result<Verification, Error> {
     let spec = spec::collect(tcx, owner, body).map_err(Error::Spec)?;
     let contracted = !spec.is_empty();
-    let mut environment = Environment::new();
-    let obligations = engine::execute(&mut environment, tcx, body, &spec)
+    let mut env = Environment::new();
+    let obligations = engine::execute(&mut env, tcx, body, &spec)
         .map_err(|error| Error::Execution { error, contracted })?;
 
-    Ok(Verification { environment, obligations })
+    Ok(Verification { environment: env, obligations })
 }

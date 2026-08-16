@@ -12,14 +12,14 @@ pub use parser::{Expected, ParseError, ParseErrorKind, ResolveError, parse};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Clause<B> {
     term: Term,
-    environment: Environment<B>,
+    env: Environment<B>,
 }
 
 impl<B> Clause<B> {
     /// Checks and creates an open contract clause.
-    pub fn new(term: Term, environment: Environment<B>) -> Result<Self, TypeError> {
-        environment.sort(term)?;
-        Ok(Self { term, environment })
+    pub fn new(term: Term, env: Environment<B>) -> Result<Self, TypeError> {
+        env.sort(term)?;
+        Ok(Self { term, env })
     }
 
     /// Returns the clause's term.
@@ -28,18 +28,20 @@ impl<B> Clause<B> {
     }
 
     /// Returns the environment which scopes the term's frontend bindings.
-    pub const fn environment(&self) -> &Environment<B> {
-        &self.environment
+    pub const fn env(&self) -> &Environment<B> {
+        &self.env
     }
 
-    const fn from_checked(term: Term, environment: Environment<B>) -> Self {
-        Self { term, environment }
+    const fn from_checked(term: Term, env: Environment<B>) -> Self {
+        Self { term, env }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{Environment, INTERNERS, Intern, Interners, Op, SortDef, TermDef, TypeError};
+    use crate::{
+        Environment, INTERNERS, Intern, Interners, Op, SortDef, TermDef, TypeError, term::int,
+    };
 
     use super::Clause;
 
@@ -47,17 +49,17 @@ mod tests {
     fn requires_a_well_sorted_term() {
         let interners = Interners::default();
         let body = || {
-            let environment = Environment::<()>::new();
-            let term = environment.int(1);
-            assert_eq!(Clause::new(term, environment).unwrap().term(), term);
+            let env = Environment::<()>::new();
+            let term = int(1);
+            assert_eq!(Clause::new(term, env).unwrap().term(), term);
 
-            let environment = Environment::<()>::new();
+            let env = Environment::<()>::new();
             let yes = TermDef::Bool(true).intern();
             let invalid = TermDef::Binary { op: Op::Add, lhs: yes, rhs: yes }.intern();
             let int = SortDef::Int.intern();
             let bool = SortDef::Bool.intern();
             assert_eq!(
-                Clause::new(invalid, environment),
+                Clause::new(invalid, env),
                 Err(TypeError::Sort { expected: int, actual: bool })
             );
         };

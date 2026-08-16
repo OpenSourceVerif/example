@@ -245,11 +245,11 @@ impl Intern for &str {
 /// at least as long as the resulting definition:
 ///
 /// ```
-/// use verifier_core::{Environment, INTERNERS, Intern, Interners, def};
+/// use verifier_core::{INTERNERS, Intern, Interners, TermDef, def};
 ///
 /// let interners = Interners::default();
 /// let body = || {
-///     let term = Environment::<()>::new().int(1);
+///     let term = TermDef::Const(1).intern();
 ///     def!(let def = term);
 ///     let same = def.intern();
 ///     assert_eq!(same, term);
@@ -279,18 +279,20 @@ macro_rules! def {
 #[cfg(test)]
 mod tests {
     use super::{INTERNERS, Intern, Interners};
-    use crate::{Environment, Field, Fields, SortDef, TermDef};
+    use crate::{
+        Environment, Field, Fields, SortDef, TermDef,
+        term::{add, and, bool as boolean, eq, int as integer, proj, tuple, var as variable},
+    };
 
     #[test]
     fn interns_and_resolves_borrowed_definitions() {
         let interners = Interners::default();
         let body = || {
-            let environment = Environment::<()>::new();
-            let one = environment.int(1);
-            let tuple = environment.tuple(&[one, one]);
-            def!(let def = tuple);
+            let one = integer(1);
+            let pair = tuple(&[one, one]);
+            def!(let def = pair);
             assert_eq!(def, &TermDef::Tuple(Fields::new(&[one, one])));
-            assert_eq!(def.intern(), tuple);
+            assert_eq!(def.intern(), pair);
         };
         // SAFETY: `body` is synchronous and discards all arena values.
         unsafe { INTERNERS.set(&interners, body) }
@@ -300,15 +302,14 @@ mod tests {
     fn references_survive_arena_and_table_growth() {
         let interners = Interners::default();
         let body = || {
-            let environment = Environment::<()>::new();
-            let first = environment.int(0);
+            let first = integer(0);
             def!(let definition = first);
             let int = SortDef::Int.intern();
             def!(let sort_definition = int);
             let name = "first".intern();
             def!(let text = name);
             for value in 1..2_000 {
-                environment.int(value);
+                integer(value);
             }
             assert_eq!(definition, &TermDef::Const(0));
             assert_eq!(sort_definition, &SortDef::Int);
@@ -327,10 +328,10 @@ mod tests {
             let bool = SortDef::Bool.intern();
             let mut ints = Environment::new();
             let int_var = ints.bind_value(int, ());
-            let int_term = ints.var(int_var);
+            let int_term = variable(int_var);
             let mut bools = Environment::new();
             let bool_var = bools.bind_value(bool, ());
-            let bool_term = bools.var(bool_var);
+            let bool_term = variable(bool_var);
 
             assert_eq!(int_term, bool_term);
             assert_eq!(ints.sort(int_term), Ok(int));
@@ -347,35 +348,31 @@ mod tests {
             let int = SortDef::Int.intern();
             let bool = SortDef::Bool.intern();
             let tuple_sort = SortDef::Tuple(Fields::new(&[int, bool])).intern();
-            let mut environment = Environment::new();
-            let tuple_var = environment.bind_value(tuple_sort, "pair");
-            let tuple_sym = environment.var(tuple_var);
+            let mut env = Environment::new();
+            let tuple_var = env.bind_value(tuple_sort, "pair");
+            let tuple_sym = variable(tuple_var);
 
             let second = Field::from(1);
-            assert_eq!(environment.sort(environment.proj(tuple_sym, second)), Ok(bool));
-            let one = environment.int(1);
-            let yes = environment.bool(true);
-            let tuple = environment.tuple(&[one, yes]);
-            assert_eq!(environment.proj(tuple, Field::from(0)), one);
-            assert_eq!(environment.proj(tuple, second), yes);
+            assert_eq!(env.sort(proj(tuple_sym, second)), Ok(bool));
+            let one = integer(1);
+            let yes = boolean(true);
+            let pair = tuple(&[one, yes]);
+            assert_eq!(proj(pair, Field::from(0)), one);
+            assert_eq!(proj(pair, second), yes);
         };
         // SAFETY: `body` is synchronous and discards all arena values.
         unsafe { INTERNERS.set(&interners, body) }
     }
 
     #[test]
-    fn nested_constructor_calls_need_no_temporaries() {
+    fn nested_term_construction_is_checked_at_once() {
         let interners = Interners::default();
         let body = || {
-            let environment = Environment::<()>::new();
-            let term = environment.and(
-                environment.bool(true),
-                environment.eq(
-                    environment.int(1),
-                    environment.add(environment.int(0), environment.int(1)),
-                ),
+            let env = Environment::<()>::new();
+            assert_eq!(
+                env.sort(and(boolean(true), eq(integer(1), add(integer(0), integer(1))))),
+                Ok(SortDef::Bool.intern())
             );
-            assert_eq!(environment.sort(term), Ok(SortDef::Bool.intern()));
         };
         // SAFETY: `body` is synchronous and discards all arena values.
         unsafe { INTERNERS.set(&interners, body) }

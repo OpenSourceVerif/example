@@ -1,6 +1,9 @@
 use std::{fmt, ops::Range};
 
-use crate::{Environment, Op, Sort, SortDef, Term, def};
+use crate::{
+    Environment, Op, Sort, SortDef, Term, def,
+    term::{and, binary, bool, implies, int, mul, neg, not, or, var as variable},
+};
 
 use super::Clause;
 
@@ -227,7 +230,7 @@ where
             self.require(lhs, SortDef::Bool)?;
             let rhs = self.implies()?;
             self.require(rhs, SortDef::Bool)?;
-            Ok(self.environment.implies(lhs, rhs))
+            Ok(implies(lhs, rhs))
         } else {
             Ok(lhs)
         }
@@ -239,7 +242,7 @@ where
             self.require(lhs, SortDef::Bool)?;
             let rhs = self.and()?;
             self.require(rhs, SortDef::Bool)?;
-            lhs = self.environment.or(lhs, rhs);
+            lhs = or(lhs, rhs);
         }
         Ok(lhs)
     }
@@ -250,7 +253,7 @@ where
             self.require(lhs, SortDef::Bool)?;
             let rhs = self.comparison()?;
             self.require(rhs, SortDef::Bool)?;
-            lhs = self.environment.and(lhs, rhs);
+            lhs = and(lhs, rhs);
         }
         Ok(lhs)
     }
@@ -274,7 +277,7 @@ where
         if !matches!(op, Op::Eq | Op::Ne) {
             self.require(lhs, SortDef::Int)?;
         }
-        Ok(self.environment.binary(op, lhs, rhs))
+        Ok(binary(op, lhs, rhs))
     }
 
     fn additive(&mut self) -> Result<Term, ParseError> {
@@ -289,7 +292,7 @@ where
             self.require(lhs, SortDef::Int)?;
             let rhs = self.multiplicative()?;
             self.require(rhs, SortDef::Int)?;
-            lhs = self.environment.binary(op, lhs, rhs);
+            lhs = binary(op, lhs, rhs);
         }
     }
 
@@ -299,7 +302,7 @@ where
             self.require(lhs, SortDef::Int)?;
             let rhs = self.unary()?;
             self.require(rhs, SortDef::Int)?;
-            lhs = self.environment.mul(lhs, rhs);
+            lhs = mul(lhs, rhs);
         }
         Ok(lhs)
     }
@@ -308,12 +311,12 @@ where
         if self.take(Token::Bang)? {
             let term = self.unary()?;
             self.require(term, SortDef::Bool)?;
-            return Ok(self.environment.not(term));
+            return Ok(not(term));
         }
         if self.take(Token::Minus)? {
             let term = self.unary()?;
             self.require(term, SortDef::Int)?;
-            return Ok(self.environment.neg(term));
+            return Ok(neg(term));
         }
         self.atom()
     }
@@ -323,11 +326,11 @@ where
         match token {
             Token::Int(value) => {
                 self.bump()?;
-                Ok(self.environment.int(value))
+                Ok(int(value))
             }
             Token::True | Token::False => {
                 self.bump()?;
-                Ok(self.environment.bool(token == Token::True))
+                Ok(bool(token == Token::True))
             }
             Token::Ident(name) => {
                 self.bump()?;
@@ -361,7 +364,7 @@ where
                         self.environment.bind_value(sort, binding)
                     }
                 };
-                Ok(self.environment.var(var))
+                Ok(variable(var))
             }
             Token::LParen => {
                 self.bump()?;
@@ -449,7 +452,7 @@ mod tests {
             def!(let definition = clause.term());
             assert!(matches!(*definition, TermDef::Binary { op: Op::Implies, .. }));
             assert_eq!(
-                clause.environment().iter().map(|(_, _, binding)| *binding).collect::<Vec<_>>(),
+                clause.env().iter().map(|(_, _, binding)| *binding).collect::<Vec<_>>(),
                 [1, 2]
             );
         };
@@ -465,7 +468,7 @@ mod tests {
             let x = parse("x >= 0", |_| Ok((int, 1))).unwrap();
             let value = parse("value >= 0", |_| Ok((int, 2))).unwrap();
             assert_eq!(value.term(), x.term());
-            assert_ne!(value.environment(), x.environment());
+            assert_ne!(value.env(), x.env());
         };
         // SAFETY: `body` is synchronous and discards all arena values.
         unsafe { INTERNERS.set(&interners, body) }

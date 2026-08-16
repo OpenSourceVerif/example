@@ -7,7 +7,10 @@ use rustc_middle::{
     ty::Ty,
 };
 use smallvec::SmallVec;
-use verifier_core::{Environment, Field, Name, Op, SortDef, Term, def};
+use verifier_core::{
+    Environment, Field, Name, Op, SortDef, Term, def,
+    term::{binary, bool, eq, gt, int, lt, neg, not, or, proj, tuple, unit},
+};
 
 use crate::{
     engine::obligation::{ExecutionError, LocationExt},
@@ -42,7 +45,7 @@ impl<'a, 'tcx> Executor<'a, 'tcx> {
                 return Err(location.error(format!("place projection `{projection:?}`")));
             };
             let sort =
-                self.environment.sort(value).map_err(|error| location.error(error.to_string()))?;
+                self.env.sort(value).map_err(|error| location.error(error.to_string()))?;
             let fields = {
                 def!(let definition = sort);
                 let SortDef::Tuple(fields) = *definition else {
@@ -53,7 +56,7 @@ impl<'a, 'tcx> Executor<'a, 'tcx> {
             if field.as_usize() >= fields {
                 return Err(location.error(format!("field {field:?} is outside symbolic tuple")));
             }
-            value = self.environment.proj(value, field.to_field());
+            value = proj(value, field.to_field());
         }
         Ok(value)
     }
@@ -73,7 +76,7 @@ impl<'a, 'tcx> Executor<'a, 'tcx> {
             state.location.error(format!("write through uninitialized local `{:?}`", place.local))
         })?;
         let updated =
-            write_projection(self.environment, root, place.projection, term, state.location)?;
+            write_projection(self.env, root, place.projection, term, state.location)?;
         state.store[place.local] = Some(updated);
         Ok(())
     }
@@ -98,15 +101,15 @@ impl<'a, 'tcx, 'mir> Evaluate<&'mir Rvalue<'tcx>> for Executor<'a, 'tcx> {
                         .error(format!("bitwise not on unsupported type `{ty}`")));
                 }
                 let term = self.evaluate(state, operand)?;
-                Ok(self.environment.not(term))
+                Ok(not(term))
             }
             Rvalue::UnaryOp(UnOp::Neg, operand) => {
                 let value = self.evaluate(state, operand)?;
-                Ok(self.environment.neg(value))
+                Ok(neg(value))
             }
             Rvalue::Aggregate(kind, operands) if matches!(&**kind, AggregateKind::Tuple) => {
                 let values = self.evaluate(state, operands)?;
-                Ok(self.environment.tuple(&values))
+                Ok(tuple(&values))
             }
             Rvalue::UnaryOp(..)
             | Rvalue::Cast(..)
@@ -174,7 +177,7 @@ impl<'a, 'tcx, 'mir> Evaluate<(MirOp, &'mir Operand<'tcx>, &'mir Operand<'tcx>)>
                 return Err(location.error(format!("unsupported binary operation `{mir_op:?}`")));
             }
         };
-        let value = self.environment.binary(op, lhs_term, rhs_term);
+        let value = binary(op, lhs_term, rhs_term);
         if checked_arithmetic {
             let ty = lhs.ty(self.body, self.tcx);
             let Some(layout) = integer_layout(self.tcx, ty) else {
@@ -187,12 +190,7 @@ impl<'a, 'tcx, 'mir> Evaluate<(MirOp, &'mir Operand<'tcx>, &'mir Operand<'tcx>)>
                     "checked arithmetic on `{ty}` exceeds the symbolic integer domain"
                 )));
             };
-            let minimum = self.environment.int(minimum);
-            let maximum = self.environment.int(maximum);
-            let below_minimum = self.environment.lt(value, minimum);
-            let above_maximum = self.environment.gt(value, maximum);
-            let overflowed = self.environment.or(below_minimum, above_maximum);
-            return Ok(self.environment.tuple(&[value, overflowed]));
+            return Ok(tuple(&[value, or(lt(value, int(minimum)), gt(value, int(maximum)))]));
         }
         Ok(value)
     }
@@ -212,14 +210,14 @@ impl<'a, 'tcx, 'mir> Evaluate<&'mir Operand<'tcx>> for Executor<'a, 'tcx> {
             Operand::Constant(constant) => {
                 let ty = constant.const_.ty();
                 if ty.is_unit() {
-                    return Ok(self.environment.unit());
+                    return Ok(unit());
                 }
                 if ty.is_bool() {
                     let value =
                         constant.const_.try_eval_bool(self.tcx, self.typing_env).ok_or_else(
                             || location.error(format!("constant `{constant}` is not evaluatable")),
                         )?;
-                    return Ok(self.environment.bool(value));
+                    return Ok(bool(value));
                 }
                 let Some(layout) = integer_layout(self.tcx, ty) else {
                     return Err(location
@@ -234,7 +232,7 @@ impl<'a, 'tcx, 'mir> Evaluate<&'mir Operand<'tcx>> for Executor<'a, 'tcx> {
                         "constant `{constant}` does not fit the symbolic integer domain"
                     ))
                 })?;
-                Ok(self.environment.int(value))
+                Ok(int(value))
             }
             Operand::RuntimeChecks(_) => Err(location.error("runtime-check configuration operand")),
         }
@@ -250,7 +248,7 @@ impl<'a, 'tcx, 'mir> Evaluate<(&'mir Operand<'tcx>, bool)> for Executor<'a, 'tcx
         what: (&'mir Operand<'tcx>, bool),
     ) -> Result<Self::Output, ExecutionError> {
         let term = self.evaluate(state, what.0)?;
-        if what.1 { Ok(term) } else { Ok(self.environment.not(term)) }
+        if what.1 { Ok(term) } else { Ok(not(term)) }
     }
 }
 
@@ -292,7 +290,7 @@ impl<'a, 'tcx> Evaluate<(Term, Ty<'tcx>, u128)> for Executor<'a, 'tcx> {
         let location = state.location;
         if ty.is_bool() {
             return match raw {
-                0 => Ok(self.environment.not(discriminant)),
+                0 => Ok(not(discriminant)),
                 1 => Ok(discriminant),
                 _ => Err(location.error(format!("invalid boolean switch value {raw}"))),
             };
@@ -303,13 +301,12 @@ impl<'a, 'tcx> Evaluate<(Term, Ty<'tcx>, u128)> for Executor<'a, 'tcx> {
         let value = integer_from_bits(raw, layout).ok_or_else(|| {
             location.error("switch value does not fit the symbolic integer domain")
         })?;
-        let value = self.environment.int(value);
-        Ok(Environment::eq(self.environment, discriminant, value))
+        Ok(eq(discriminant, int(value)))
     }
 }
 
 fn write_projection(
-    environment: &Environment<Name>,
+    env: &Environment<Name>,
     root: Term,
     projection: &[mir::PlaceElem<'_>],
     value: Term,
@@ -321,7 +318,7 @@ fn write_projection(
     let ProjectionElem::Field(field, _) = first else {
         return Err(location.error(format!("place projection `{first:?}`")));
     };
-    let root_sort = environment.sort(root).map_err(|error| location.error(error.to_string()))?;
+    let root_sort = env.sort(root).map_err(|error| location.error(error.to_string()))?;
     let field_count = {
         def!(let definition = root_sort);
         let SortDef::Tuple(field_sorts) = *definition else {
@@ -335,8 +332,8 @@ fn write_projection(
     }
 
     let mut fields: FieldVec<Field, Term> =
-        (0..field_count).map(|field| environment.proj(root, Field::from_usize(field))).collect();
+        (0..field_count).map(|field| proj(root, Field::from_usize(field))).collect();
     let current = fields[field];
-    fields[field] = write_projection(environment, current, rest, value, location)?;
-    Ok(environment.tuple(fields.as_raw_slice()))
+    fields[field] = write_projection(env, current, rest, value, location)?;
+    Ok(tuple(fields.as_raw_slice()))
 }
