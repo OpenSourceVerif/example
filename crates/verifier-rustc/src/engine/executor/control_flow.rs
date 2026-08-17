@@ -162,15 +162,27 @@ impl<'a, 'tcx> Executor<'a, 'tcx> {
         }
         Ok(())
     }
+}
 
-    fn execute_call(
+impl<'a, 'tcx, 'mir>
+    Execute<(
+        &'mir Operand<'tcx>,
+        &'mir [Spanned<Operand<'tcx>>],
+        Place<'tcx>,
+        Option<BasicBlock>,
+        Span,
+    )> for Executor<'a, 'tcx>
+{
+    fn execute(
         &mut self,
         mut state: State,
-        func: &Operand<'tcx>,
-        args: &[Spanned<Operand<'tcx>>],
-        destination: Place<'tcx>,
-        target: Option<BasicBlock>,
-        span: Span,
+        (func, args, destination, target, span): (
+            &'mir Operand<'tcx>,
+            &'mir [Spanned<Operand<'tcx>>],
+            Place<'tcx>,
+            Option<BasicBlock>,
+            Span,
+        ),
         pending: &mut Vec<State>,
     ) -> Result<(), ExecutionError> {
         let location = state.location;
@@ -334,7 +346,7 @@ impl<'a, 'tcx, 'mir> Execute<&'mir TerminatorKind<'tcx>> for Executor<'a, 'tcx> 
                 self.transition(state, *target, pending)?;
             }
             TerminatorKind::Call { func, args, destination, target, fn_span, .. } => {
-                self.execute_call(state, func, args, *destination, *target, *fn_span, pending)?;
+                self.execute(state, (func, &**args, *destination, *target, *fn_span), pending)?;
             }
             TerminatorKind::Return => {
                 let fact = conjoin(&state.facts);
