@@ -1,47 +1,21 @@
 //! Interned symbolic term and sort definitions.
 
-use std::{fmt, marker::PhantomData, ptr::NonNull, rc::Rc};
-
 use index_vec::{IndexSlice, define_index_type};
+use interner::{Covariant, Interned};
 
 mod fields;
 
-#[derive(Debug)]
-pub(crate) struct NameDef {
-    pub(crate) text: &'static str,
-}
+/// The identity of an interned term definition.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Term(pub(crate) Interned<TermDef<'static>>);
 
-macro_rules! pointer_handle {
-    ($name:ident, $definition:ty) => {
-        #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-        #[repr(transparent)]
-        pub struct $name {
-            pointer: NonNull<$definition>,
-            // Handles belong to the current thread's installed arena.
-            thread: PhantomData<Rc<()>>,
-        }
+/// The identity of an interned term definition.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Sort(pub(crate) Interned<SortDef<'static>>);
 
-        impl $name {
-            pub(crate) fn new(pointer: NonNull<$definition>) -> Self {
-                Self { pointer, thread: PhantomData }
-            }
-
-            pub(crate) const fn pointer(self) -> NonNull<$definition> {
-                self.pointer
-            }
-        }
-
-        impl fmt::Debug for $name {
-            fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-                formatter.debug_tuple(stringify!($name)).field(&self.pointer).finish()
-            }
-        }
-    };
-}
-
-pointer_handle!(Term, TermDef<'static>);
-pointer_handle!(Sort, SortDef<'static>);
-pointer_handle!(Name, NameDef);
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+/// The identity of an interned string.
+pub struct Name(pub(crate) Interned<&'static str>);
 
 define_index_type! {
     /// A stable index into an append-only [`crate::Environment`].
@@ -74,7 +48,7 @@ pub enum Uop {
     Neg,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Covariant)]
 pub enum TermDef<'a> {
     Var(Var),
     Const(i128),
@@ -87,7 +61,7 @@ pub enum TermDef<'a> {
     Proj { tuple: Term, field: Field },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Covariant)]
 pub enum SortDef<'a> {
     Int,
     Bool,

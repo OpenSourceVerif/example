@@ -44,8 +44,7 @@ impl<'a, 'tcx> Executor<'a, 'tcx> {
             let ProjectionElem::Field(field, _) = projection else {
                 return Err(location.error(format!("place projection `{projection:?}`")));
             };
-            let sort =
-                self.env.sort(value).map_err(|error| location.error(error.to_string()))?;
+            let sort = self.env.sort(value).map_err(|error| location.error(error.to_string()))?;
             let fields = {
                 def!(let definition = sort);
                 let SortDef::Tuple(fields) = *definition else {
@@ -75,8 +74,7 @@ impl<'a, 'tcx> Executor<'a, 'tcx> {
         let root = *state.store[place.local].as_ref().ok_or_else(|| {
             state.location.error(format!("write through uninitialized local `{:?}`", place.local))
         })?;
-        let updated =
-            write_projection(self.env, root, place.projection, term, state.location)?;
+        let updated = write_projection(self.env, root, place.projection, term, state.location)?;
         state.store[place.local] = Some(updated);
         Ok(())
     }

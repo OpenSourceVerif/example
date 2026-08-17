@@ -1,0 +1,12 @@
+[package]
+name = "interner-derive"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[lib]
+proc-macro = true
+
+[dependencies]
+quote = { workspace = true }
+syn = { workspace = true }

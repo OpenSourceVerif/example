@@ -83,25 +83,19 @@ pub fn neg(expr: Term) -> Term {
 
 #[cfg(test)]
 mod tests {
-    use crate::{Fields, INTERNERS, Intern, Interners, Op, TermDef};
+    use crate::{Fields, INTERNERS, Intern, Interners, Op, TermDef, test};
 
     use super::{add, bool, int, proj, tuple, unit};
 
-    #[test]
-    fn constructors_only_intern_syntax() {
-        let interners = Interners::default();
-        let body = || {
+    test! {
+        constructors_only_intern_syntax {
             let one = int(1);
             assert_eq!(add(one, one), TermDef::Binary { op: Op::Add, lhs: one, rhs: one }.intern());
-        };
-        // SAFETY: `body` is synchronous and discards all arena values.
-        unsafe { INTERNERS.set(&interners, body) }
+        }
     }
 
-    #[test]
-    fn normalizes_tuple_syntax() {
-        let interners = Interners::default();
-        let body = || {
+    test! {
+        normalizes_tuple_syntax {
             let one = int(1);
             let yes = bool(true);
             let pair = tuple(&[one, yes]);
@@ -110,8 +104,6 @@ mod tests {
             assert_eq!(proj(pair, 0), one);
             assert_eq!(proj(pair, 1), yes);
             assert_eq!(pair, TermDef::Tuple(Fields::new(&[one, yes])).intern());
-        };
-        // SAFETY: `body` is synchronous and discards all arena values.
-        unsafe { INTERNERS.set(&interners, body) }
+        }
     }
 }

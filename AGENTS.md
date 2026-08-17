@@ -9,3 +9,4 @@ use more traits for
 - ad-hoc polymorphism, i.e. overloading;
 - abstraction;
 - use less newtype for adapter pattern.
+no unnecessary function forwarding e.g. forward trait impl to inherent method.

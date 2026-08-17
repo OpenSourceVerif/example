@@ -1,0 +1,10 @@
+[package]
+name = "interner"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+bumpalo = { workspace = true }
+hashbrown = { workspace = true }
+interner-derive = { workspace = true }

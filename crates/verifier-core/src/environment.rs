@@ -276,12 +276,11 @@ mod tests {
     use crate::{
         Environment, INTERNERS, Intern, Interners, Op, SortDef, TypeError,
         term::{binary, bool},
+        test,
     };
 
-    #[test]
-    fn only_checked_terms_are_cached() {
-        let interners = Interners::default();
-        let body = || {
+    test! {
+        only_checked_terms_are_cached {
             let env = Environment::<()>::new();
             let yes = bool(true);
             let invalid = binary(Op::Add, yes, yes);
@@ -295,8 +294,6 @@ mod tests {
             );
             assert_eq!(env.cached_sort(invalid), None);
             assert_eq!(env.cached_sort(yes), Some(bool_sort));
-        };
-        // SAFETY: `body` is synchronous and discards all arena values.
-        unsafe { INTERNERS.set(&interners, body) }
+        }
     }
 }

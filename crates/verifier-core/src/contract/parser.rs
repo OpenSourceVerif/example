@@ -435,12 +435,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::{ParseErrorKind, ResolveError, parse};
-    use crate::{INTERNERS, Intern, Interners, Op, SortDef, TermDef, def};
+    use crate::{INTERNERS, Intern, Interners, Op, SortDef, TermDef, def, test};
 
-    #[test]
-    fn parses_directly_into_terms() {
-        let interners = Interners::default();
-        let body = || {
+    test! {
+        parses_directly_into_terms {
             let int = SortDef::Int.intern();
             let clause = parse("x >= 0 ==> result >= x", |name| match name {
                 "x" => Ok((int, 1)),
@@ -454,42 +452,30 @@ mod tests {
             assert_eq!(
                 clause.env().iter().map(|(_, _, binding)| *binding).collect::<Vec<_>>(),
                 [1, 2]
-            );
-        };
-        // SAFETY: `body` is synchronous and discards all arena values.
-        unsafe { INTERNERS.set(&interners, body) }
+            )
+        }
     }
 
-    #[test]
-    fn renamed_variables_reuse_terms() {
-        let interners = Interners::default();
-        let body = || {
+    test! {
+        renamed_variables_reuse_terms {
             let int = SortDef::Int.intern();
             let x = parse("x >= 0", |_| Ok((int, 1))).unwrap();
             let value = parse("value >= 0", |_| Ok((int, 2))).unwrap();
             assert_eq!(value.term(), x.term());
             assert_ne!(value.env(), x.env());
-        };
-        // SAFETY: `body` is synchronous and discards all arena values.
-        unsafe { INTERNERS.set(&interners, body) }
+        }
     }
 
-    #[test]
-    fn reports_errors_by_kind_and_range() {
-        let interners = Interners::default();
-        let body = || {
+    test! {
+        reports_errors_by_kind_and_range {
             let error = parse::<u8, _>("missing >= 0", |_| Err(ResolveError::Unknown)).unwrap_err();
             assert_eq!(error.range, 0..7);
             assert_eq!(error.kind, ParseErrorKind::Unknown("missing".to_owned()));
-        };
-        // SAFETY: `body` is synchronous and discards all arena values.
-        unsafe { INTERNERS.set(&interners, body) }
+        }
     }
 
-    #[test]
-    fn rejects_one_binding_at_two_sorts() {
-        let interners = Interners::default();
-        let body = || {
+    test! {
+        rejects_one_binding_at_two_sorts {
             let int = SortDef::Int.intern();
             let bool = SortDef::Bool.intern();
             let error = parse("x == y", |name| match name {
@@ -500,8 +486,6 @@ mod tests {
             .unwrap_err();
             assert_eq!(error.range, 5..6);
             assert_eq!(error.kind, ParseErrorKind::Inconsistent("y".to_owned()));
-        };
-        // SAFETY: `body` is synchronous and discards all arena values.
-        unsafe { INTERNERS.set(&interners, body) }
+        }
     }
 }

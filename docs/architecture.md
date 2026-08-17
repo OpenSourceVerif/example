@@ -4,6 +4,28 @@ The project is organized around dependency boundaries rather than execution
 order. Higher layers may depend on lower layers; lower layers must not import
 types from higher layers.
 
+## `interner`
+
+`interner` owns arena-backed canonical storage and the raw-pointer boundary for
+interned identities. An `Interner<D>` owns one hash table and bump arena;
+`Interned<D>` is a thread-confined, one-pointer identity. Definitions never move
+after publication, and the table is dropped before its arena.
+
+Each definition family supplies hashing, cross-representation equality, and
+arena allocation through the safe `Definition` trait. Lifetime-varying
+definitions derive the unsafe `Covariant` proof used to rebrand a stored arena
+lifetime to the lifetime of a later borrow. The derive generates an identity
+reborrow, so Rust rejects definitions that are not structurally covariant.
+Hash/equality consistency affects canonicalization but is not a memory-safety
+invariant.
+
+The crate deliberately does not assign a static arena lifetime to identities.
+Resolution is unchecked at this layer because an identity carries no ownership
+token. The session owner must ensure that an identity is resolved only by the
+interner which created it and before that interner is dropped. Interior mutation
+uses `RefCell`, so accidental reentrant mutation panics rather than creating
+aliased mutable table access.
+
 ## `verifier-core`
 
 `verifier-core` owns symbolic terms, sorts, names, environments, open contract
@@ -14,11 +36,11 @@ to MIR.
 
 Symbolic identity storage and symbolic scope are separate:
 
-- `Interners` owns canonical `Term`, `Sort`, and `Name` definitions for one
-  synchronous compiler session. The driver installs it in scoped thread-local
-  storage around the complete verification call tree, so ordinary operations
-  can intern and resolve definitions without threading a storage parameter
-  through every function.
+- `Interners` owns typed term, sort, and name interners for one synchronous
+  compiler session. The driver installs it in scoped thread-local storage around
+  the complete verification call tree, so ordinary operations can intern and
+  resolve definitions without threading storage through every function. This
+  dynamic session contract is what makes unchecked identity resolution safe.
 - Free functions in `term` intern raw syntax. They may normalize syntax such as
   an empty tuple or a projection from a tuple literal, but do not inspect an
   environment or establish a sorting judgment.
@@ -27,11 +49,18 @@ Symbolic identity storage and symbolic scope are separate:
   cache populated only by its checker. A raw interned term has syntax identity
   but is checked and sorted only under an environment.
 
-The interned handles point into the current session arena and are thread
+The interned handles point into the current session's arenas and are thread
 confined. They must not escape the installed session, cross threads, or remain
 live across suspension. Parallel or asynchronous verification therefore
 requires a different session-storage design rather than a safe wrapper around
 the current scoped TLS contract.
+
+Term and sort field slices are copied directly into their definition interner's
+arena after the enclosing definition misses its canonicalization lookup. They
+are not independently interned: repeated enclosing definitions allocate no new
+slice, while a separate list table would only deduplicate equal slices shared by
+different enclosing term definitions. That extra representation is deferred
+until a representative workload demonstrates a net benefit.
 
 ## `verifier-rustc`
 

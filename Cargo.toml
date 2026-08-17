@@ -1,5 +1,7 @@
 [workspace]
 members = [
+    "crates/interner",
+    "crates/interner-derive",
     "crates/scoped-tls",
     "crates/verifier-core",
     "crates/verifier-driver",
@@ -17,6 +19,10 @@ hashbrown = "0.17.1"
 index_vec = "0.1.4"
 smallvec = { version = "1", features = ["const_generics"] }
 fixedbitset = "0.5.7"
+interner = { path = "crates/interner" }
+interner-derive = { path = "crates/interner-derive" }
+quote = "1"
 scoped-tls = { path = "crates/scoped-tls" }
+syn = "2"
 verifier-core = { path = "crates/verifier-core" }
 verifier-rustc = { path = "crates/verifier-rustc" }

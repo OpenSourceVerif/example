@@ -67,8 +67,7 @@ fn actual<B: Copy>(
     get: &mut impl FnMut(B) -> Option<Actual>,
     actuals: &mut HashMap<Var, Actual>,
 ) -> Result<(Declaration, Actual), InstantiateError<B>> {
-    let (declaration, binding) =
-        clause.env().get(var).ok_or(InstantiateError::Missing(var))?;
+    let (declaration, binding) = clause.env().get(var).ok_or(InstantiateError::Missing(var))?;
     let value = if let Some(value) = actuals.get(&var) {
         *value
     } else {
@@ -158,13 +157,11 @@ mod tests {
         Environment, INTERNERS, Intern, Interners, SortDef, TermDef,
         contract::Clause,
         def,
-        term::{call, int as integer, var as variable},
+        term::{call, int as integer, var as variable}, test
     };
 
-    #[test]
-    fn substitutes_variables_and_renames_functions() {
-        let interners = Interners::default();
-        let body = || {
+    test! {
+        substitutes_variables_and_renames_functions {
             let int = SortDef::Int.intern();
             let mut source = Environment::new();
             let function = source.bind_function(&[int], int, 1);
@@ -186,23 +183,17 @@ mod tests {
                 *definition,
                 TermDef::Call { function, .. } if function == target_function
             ));
-        };
-        // SAFETY: `body` is synchronous and discards all arena values.
-        unsafe { INTERNERS.set(&interners, body) }
+        }
     }
 
-    #[test]
-    fn reports_unbound_variables() {
-        let interners = Interners::default();
-        let body = || {
+    test! {
+        reports_unbound_variables {
             let int = SortDef::Int.intern();
             let mut source = Environment::new();
             let var = source.bind_value(int, 7);
             let clause = Clause::new(variable(var), source).unwrap();
             let target = Environment::<()>::new();
             assert_eq!(instantiate(&clause, &target, |_| None), Err(InstantiateError::Unbound(7)));
-        };
-        // SAFETY: `body` is synchronous and discards all arena values.
-        unsafe { INTERNERS.set(&interners, body) }
+        }
     }
 }

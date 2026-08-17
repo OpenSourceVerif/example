@@ -40,15 +40,13 @@ impl<B> Clause<B> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        Environment, INTERNERS, Intern, Interners, Op, SortDef, TermDef, TypeError, term::int,
+        Environment, INTERNERS, Intern, Interners, Op, SortDef, TermDef, TypeError, term::int, test
     };
 
     use super::Clause;
 
-    #[test]
-    fn requires_a_well_sorted_term() {
-        let interners = Interners::default();
-        let body = || {
+    test! {
+        requires_a_well_sorted_term {
             let env = Environment::<()>::new();
             let term = int(1);
             assert_eq!(Clause::new(term, env).unwrap().term(), term);
@@ -62,8 +60,6 @@ mod tests {
                 Clause::new(invalid, env),
                 Err(TypeError::Sort { expected: int, actual: bool })
             );
-        };
-        // SAFETY: `body` is synchronous and discards all arena values.
-        unsafe { INTERNERS.set(&interners, body) }
+        }
     }
 }

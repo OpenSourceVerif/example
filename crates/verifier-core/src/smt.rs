@@ -229,28 +229,25 @@ pub fn smt(env: &Environment<Name>, vc: Term) -> Result<String, TypeError> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        Environment, Fields, INTERNERS, Intern, Interners, Op, SortDef, TermDef, TypeError,
+        Environment, Fields, INTERNERS, Intern, Interners, SortDef, TypeError,
         format_expr, smt,
-        term::{and, call, eq, int as integer, proj, unit as unit_term, var as variable},
+        term::{
+            add, and, bool, call, eq, int as integer, proj, unit as unit_term, var as variable,
+        },
+        test,
     };
 
-    #[test]
-    fn formats_full_width_integer_constants() {
-        let interners = Interners::default();
-        let body = || {
-            let env = Environment::<crate::Name>::new();
+    test! {
+        formats_full_width_integer_constants {
+            let env = Environment::new();
             let mut formatted = String::new();
             format_expr(&mut formatted, &env, integer(i128::MIN)).unwrap();
             assert_eq!(formatted, i128::MIN.to_string());
-        };
-        // SAFETY: `body` is synchronous and discards all arena values.
-        unsafe { INTERNERS.set(&interners, body) }
+        }
     }
 
-    #[test]
-    fn distinguishes_variables_with_the_same_name() {
-        let interners = Interners::default();
-        let body = || {
+    test! {
+        distinguishes_variables_with_the_same_name {
             let int = SortDef::Int.intern();
             let name = "x".intern();
             let mut env = Environment::new();
@@ -260,15 +257,11 @@ mod tests {
             assert!(output.contains("(declare-const x!0 Int)"));
             assert!(output.contains("(declare-const x!1 Int)"));
             assert!(output.contains("(= x!0 x!1)"));
-        };
-        // SAFETY: `body` is synchronous and discards all arena values.
-        unsafe { INTERNERS.set(&interners, body) }
+        }
     }
 
-    #[test]
-    fn declares_functions_and_projects_tuples() {
-        let interners = Interners::default();
-        let body = || {
+    test! {
+        declares_functions_and_projects_tuples {
             let int = SortDef::Int.intern();
             let bool = SortDef::Bool.intern();
             let unit = SortDef::Tuple(Fields::new(&[])).intern();
@@ -294,45 +287,34 @@ mod tests {
             assert!(output.contains("(declare-fun f!2 (Int) Int)"));
             assert!(output.contains("(tuple2!0 pair!0)"));
             assert!(output.contains("(= unit!1 tuple0)"));
-        };
-        // SAFETY: `body` is synchronous and discards all arena values.
-        unsafe { INTERNERS.set(&interners, body) }
+        }
     }
 
-    #[test]
-    fn checks_raw_terms_at_the_smt_boundary() {
-        let interners = Interners::default();
-        let body = || {
-            let env = Environment::<crate::Name>::new();
-            let yes = TermDef::Bool(true).intern();
-            let invalid = TermDef::Binary { op: Op::Add, lhs: yes, rhs: yes }.intern();
-            let int = SortDef::Int.intern();
-            let bool = SortDef::Bool.intern();
-
-            assert_eq!(smt(&env, invalid), Err(TypeError::Sort { expected: int, actual: bool }));
-        };
-        // SAFETY: `body` is synchronous and discards all arena values.
-        unsafe { INTERNERS.set(&interners, body) }
-    }
-
-    #[test]
-    fn checks_raw_terms_at_the_expression_boundary() {
-        let interners = Interners::default();
-        let body = || {
-            let env = Environment::<crate::Name>::new();
-            let yes = TermDef::Bool(true).intern();
-            let invalid = TermDef::Binary { op: Op::Add, lhs: yes, rhs: yes }.intern();
-            let int = SortDef::Int.intern();
-            let bool = SortDef::Bool.intern();
-            let mut output = String::new();
+    test! {
+        checks_raw_terms_at_the_smt_boundary {
+            let env = Environment::new();
+            let int_sort = SortDef::Int.intern();
+            let bool_sort = SortDef::Bool.intern();
 
             assert_eq!(
-                format_expr(&mut output, &env, invalid),
-                Err(TypeError::Sort { expected: int, actual: bool })
+                smt(&env, add(bool(true), bool(true))),
+                Err(TypeError::Sort { expected: int_sort, actual: bool_sort })
+            );
+        }
+    }
+
+    test! {
+        checks_raw_terms_at_the_expression_boundary {
+            let mut output = String::new();
+            let env = Environment::new();
+            let int_sort = SortDef::Int.intern();
+            let bool_sort = SortDef::Bool.intern();
+
+            assert_eq!(
+                format_expr(&mut output, &env, add(bool(true), bool(true))),
+                Err(TypeError::Sort { expected: int_sort, actual: bool_sort })
             );
             assert!(output.is_empty());
-        };
-        // SAFETY: `body` is synchronous and discards all arena values.
-        unsafe { INTERNERS.set(&interners, body) }
+        }
     }
 }

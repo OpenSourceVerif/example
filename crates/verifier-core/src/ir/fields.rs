@@ -37,8 +37,8 @@ impl<'a, T> IntoIterator for Fields<'a, T> {
 }
 
 // tiny interop, love it.
-impl<T: Clone, const N: usize> Into<SmallVec<[T; N]>> for Fields<'_, T> {
-    fn into(self) -> SmallVec<[T; N]> {
-        self.as_ref().into()
+impl<T: Clone, const N: usize> From<Fields<'_, T>> for SmallVec<[T; N]> {
+    fn from(fields: Fields<'_, T>) -> Self {
+        fields.as_ref().into()
     }
 }
