@@ -210,7 +210,7 @@ impl Intern for &str {
 ///     fields.as_ref()
 /// }
 /// ```
-/// 
+///
 /// This is a statement macro because `tls` must live for the scope.
 macro_rules! def {
     (let $definition:ident = $identity:expr $(;)?) => {

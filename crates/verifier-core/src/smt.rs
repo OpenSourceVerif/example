@@ -229,8 +229,7 @@ pub fn smt(env: &Environment<Name>, vc: Term) -> Result<String, TypeError> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        Environment, Fields, INTERNERS, Intern, Interners, SortDef, TypeError,
-        format_expr, smt,
+        Environment, Fields, INTERNERS, Intern, Interners, SortDef, TypeError, format_expr, smt,
         term::{
             add, and, bool, call, eq, int as integer, proj, unit as unit_term, var as variable,
         },

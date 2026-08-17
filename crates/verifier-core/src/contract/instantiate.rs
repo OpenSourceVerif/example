@@ -157,7 +157,8 @@ mod tests {
         Environment, INTERNERS, Intern, Interners, SortDef, TermDef,
         contract::Clause,
         def,
-        term::{call, int as integer, var as variable}, test
+        term::{call, int as integer, var as variable},
+        test,
     };
 
     test! {

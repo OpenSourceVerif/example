@@ -40,7 +40,7 @@ impl<B> Clause<B> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        Environment, INTERNERS, Intern, Interners, Op, SortDef, TermDef, TypeError, term::int, test
+        Environment, INTERNERS, Intern, Interners, Op, SortDef, TermDef, TypeError, term::int, test,
     };
 
     use super::Clause;
